@@ -12,13 +12,19 @@ def read_jsonl(path: Path):
 
 def test_smoke_dataset_is_deterministic(tmp_path):
     first = generate(Settings(seed=7, profile="smoke", output=tmp_path / "first", compressed=True))
-    second = generate(Settings(seed=7, profile="smoke", output=tmp_path / "second", compressed=True))
+    second = generate(
+        Settings(seed=7, profile="smoke", output=tmp_path / "second", compressed=True)
+    )
     assert first["counts"] == second["counts"]
-    assert next(read_jsonl(tmp_path / "first" / "batches.jsonl.gz")) == next(read_jsonl(tmp_path / "second" / "batches.jsonl.gz"))
+    assert next(read_jsonl(tmp_path / "first" / "batches.jsonl.gz")) == next(
+        read_jsonl(tmp_path / "second" / "batches.jsonl.gz")
+    )
 
 
 def test_dataset_has_bangladesh_context_and_ground_truth(tmp_path):
-    manifest = generate(Settings(seed=9, profile="smoke", output=tmp_path / "dataset", compressed=True))
+    manifest = generate(
+        Settings(seed=9, profile="smoke", output=tmp_path / "dataset", compressed=True)
+    )
     assert manifest["synthetic"] is True
     assert manifest["geography"]["primary_country"] == "BD"
     organizations = list(read_jsonl(tmp_path / "dataset" / "organizations.jsonl.gz"))

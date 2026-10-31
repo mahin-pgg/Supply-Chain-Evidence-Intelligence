@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from scei.ingestion.models import EvidenceRecordIngest, EventIngestEnvelope, SourceDocumentIngest
-
+from scei.ingestion.models import EventIngestEnvelope, EvidenceRecordIngest, SourceDocumentIngest
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -87,10 +86,17 @@ class SQLiteCanonicalStore:
              source_channel, received_at, sha256, language, contains_scan, metadata_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                str(document.organization_id), str(document.document_id), document.document_type,
-                document.file_name, document.mime_type, document.source_channel,
-                document.received_at.isoformat(), document.sha256, document.language,
-                int(document.contains_scan), _json(document.metadata),
+                str(document.organization_id),
+                str(document.document_id),
+                document.document_type,
+                document.file_name,
+                document.mime_type,
+                document.source_channel,
+                document.received_at.isoformat(),
+                document.sha256,
+                document.language,
+                int(document.contains_scan),
+                _json(document.metadata),
             ),
         )
         self.connection.commit()
@@ -103,9 +109,15 @@ class SQLiteCanonicalStore:
              canonical_value, corruption_type, source_locator_json, gold_reference)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                str(record.organization_id), str(record.record_id), str(record.document_id),
-                record.field_name, record.observed_value, record.canonical_value,
-                record.corruption_type, _json(record.source_locator), record.gold_reference,
+                str(record.organization_id),
+                str(record.record_id),
+                str(record.document_id),
+                record.field_name,
+                record.observed_value,
+                record.canonical_value,
+                record.corruption_type,
+                _json(record.source_locator),
+                record.gold_reference,
             ),
         )
         self.connection.commit()
@@ -118,19 +130,40 @@ class SQLiteCanonicalStore:
              source_system, payload_json, provenance_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                str(event.organization_id), str(event.event_id), event.event_type,
-                event.event_time.isoformat(), event.idempotency_key, event.source_system,
-                _json(event.payload), _json(event.provenance),
+                str(event.organization_id),
+                str(event.event_id),
+                event.event_type,
+                event.event_time.isoformat(),
+                event.idempotency_key,
+                event.source_system,
+                _json(event.payload),
+                _json(event.provenance),
             ),
         )
         self.connection.commit()
         return cursor.rowcount == 1
 
-    def add_documents(self, documents: Iterable[SourceDocumentIngest], batch_size: int = 1000) -> int:
+    def add_documents(
+        self, documents: Iterable[SourceDocumentIngest], batch_size: int = 1000
+    ) -> int:
         rows = []
         inserted = 0
         for document in documents:
-            rows.append((str(document.organization_id), str(document.document_id), document.document_type, document.file_name, document.mime_type, document.source_channel, document.received_at.isoformat(), document.sha256, document.language, int(document.contains_scan), _json(document.metadata)))
+            rows.append(
+                (
+                    str(document.organization_id),
+                    str(document.document_id),
+                    document.document_type,
+                    document.file_name,
+                    document.mime_type,
+                    document.source_channel,
+                    document.received_at.isoformat(),
+                    document.sha256,
+                    document.language,
+                    int(document.contains_scan),
+                    _json(document.metadata),
+                )
+            )
             if len(rows) >= batch_size:
                 inserted += self._insert_documents(rows)
                 rows = []
@@ -140,18 +173,35 @@ class SQLiteCanonicalStore:
 
     def _insert_documents(self, rows: list[tuple[object, ...]]) -> int:
         before = self.connection.total_changes
-        self.connection.executemany("""INSERT OR IGNORE INTO source_documents
+        self.connection.executemany(
+            """INSERT OR IGNORE INTO source_documents
             (organization_id, document_id, document_type, file_name, mime_type, source_channel,
              received_at, sha256, language, contains_scan, metadata_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", rows)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
         self.connection.commit()
         return self.connection.total_changes - before
 
-    def add_evidence_records(self, records: Iterable[EvidenceRecordIngest], batch_size: int = 1000) -> int:
+    def add_evidence_records(
+        self, records: Iterable[EvidenceRecordIngest], batch_size: int = 1000
+    ) -> int:
         rows = []
         inserted = 0
         for record in records:
-            rows.append((str(record.organization_id), str(record.record_id), str(record.document_id), record.field_name, record.observed_value, record.canonical_value, record.corruption_type, _json(record.source_locator), record.gold_reference))
+            rows.append(
+                (
+                    str(record.organization_id),
+                    str(record.record_id),
+                    str(record.document_id),
+                    record.field_name,
+                    record.observed_value,
+                    record.canonical_value,
+                    record.corruption_type,
+                    _json(record.source_locator),
+                    record.gold_reference,
+                )
+            )
             if len(rows) >= batch_size:
                 inserted += self._insert_evidence(rows)
                 rows = []
@@ -161,10 +211,13 @@ class SQLiteCanonicalStore:
 
     def _insert_evidence(self, rows: list[tuple[object, ...]]) -> int:
         before = self.connection.total_changes
-        self.connection.executemany("""INSERT OR IGNORE INTO evidence_records
+        self.connection.executemany(
+            """INSERT OR IGNORE INTO evidence_records
             (organization_id, record_id, document_id, field_name, observed_value, canonical_value,
              corruption_type, source_locator_json, gold_reference)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", rows)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
         self.connection.commit()
         return self.connection.total_changes - before
 
@@ -172,7 +225,18 @@ class SQLiteCanonicalStore:
         rows = []
         inserted = 0
         for event in events:
-            rows.append((str(event.organization_id), str(event.event_id), event.event_type, event.event_time.isoformat(), event.idempotency_key, event.source_system, _json(event.payload), _json(event.provenance)))
+            rows.append(
+                (
+                    str(event.organization_id),
+                    str(event.event_id),
+                    event.event_type,
+                    event.event_time.isoformat(),
+                    event.idempotency_key,
+                    event.source_system,
+                    _json(event.payload),
+                    _json(event.provenance),
+                )
+            )
             if len(rows) >= batch_size:
                 inserted += self._insert_events(rows)
                 rows = []
@@ -182,9 +246,12 @@ class SQLiteCanonicalStore:
 
     def _insert_events(self, rows: list[tuple[object, ...]]) -> int:
         before = self.connection.total_changes
-        self.connection.executemany("""INSERT OR IGNORE INTO canonical_events
+        self.connection.executemany(
+            """INSERT OR IGNORE INTO canonical_events
             (organization_id, event_id, event_type, event_time, idempotency_key, source_system, payload_json, provenance_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", rows)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            rows,
+        )
         self.connection.commit()
         return self.connection.total_changes - before
 
@@ -193,7 +260,11 @@ class SQLiteCanonicalStore:
             raise ValueError("unsupported table")
         if organization_id is None:
             return int(self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-        return int(self.connection.execute(f"SELECT COUNT(*) FROM {table} WHERE organization_id = ?", (str(organization_id),)).fetchone()[0])
+        return int(
+            self.connection.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE organization_id = ?", (str(organization_id),)
+            ).fetchone()[0]
+        )
 
     def list_events(self, organization_id: UUID, limit: int = 100) -> list[dict[str, object]]:
         rows: Iterable[sqlite3.Row] = self.connection.execute(
