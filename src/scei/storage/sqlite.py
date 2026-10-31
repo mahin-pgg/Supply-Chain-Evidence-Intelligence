@@ -351,3 +351,18 @@ class SQLiteCanonicalStore:
                 (str(organization_id), str(source_node_id), limit),
             )
         return [dict(row) for row in rows]
+
+    def list_graph_nodes(
+        self, organization_id: UUID, node_type: str | None = None, limit: int = 10000
+    ) -> list[dict[str, object]]:
+        if node_type is None:
+            rows = self.connection.execute(
+                "SELECT * FROM graph_nodes WHERE organization_id = ? LIMIT ?",
+                (str(organization_id), limit),
+            )
+        else:
+            rows = self.connection.execute(
+                "SELECT * FROM graph_nodes WHERE organization_id = ? AND node_type = ? LIMIT ?",
+                (str(organization_id), node_type, limit),
+            )
+        return [dict(row) for row in rows]
