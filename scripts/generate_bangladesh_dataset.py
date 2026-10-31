@@ -231,6 +231,7 @@ def batch_rows(settings: Settings) -> Iterator[dict]:
         settings.sizes["products"],
     )
     start = date(2021, 1, 1)
+    tenant_indices: list[int] = []
     for index in range(settings.sizes["batches"]):
         batch_kind = (
             "raw" if index < material_count * 2 else ("api" if index % 5 else "intermediate")
@@ -239,10 +240,17 @@ def batch_rows(settings: Settings) -> Iterator[dict]:
             index - rng.randint(1, min(index, 25)) if index > material_count * 2 else None
         )
         parent_id = f"BATCH-BD-{parent_index + 1:08d}" if parent_index is not None else None
+        organization_index = (
+            tenant_indices[parent_index]
+            if parent_index is not None
+            else index % settings.sizes["organizations"]
+        )
+        tenant_indices.append(organization_index)
         quantity = round(rng.uniform(40, 2400), 3)
         produced = start + timedelta(days=rng.randint(0, 1700))
         yield {
             "batch_id": stable_uuid(f"batch:{settings.seed}:{index}"),
+            "organization_index": organization_index,
             "batch_code": f"BATCH-BD-{index + 1:08d}",
             "legacy_batch_code": f"LOT-{['DHK', 'GAZ', 'CTG', 'NAR'][index % 4]}-{20000 + index}",
             "batch_kind": batch_kind,
@@ -269,7 +277,7 @@ def event_rows(settings: Settings) -> Iterator[dict]:
         batch_code, date_value = batch["batch_code"], batch["manufactured_date"]
         yield {
             "event_id": stable_uuid(f"event:{settings.seed}:{index}:receive"),
-            "organization_index": index % settings.sizes["organizations"],
+            "organization_index": batch["organization_index"],
             "event_type": "RECEIVE",
             "event_time": f"{date_value}T08:30:00+06:00",
             "batch_code": batch_code,
@@ -285,7 +293,7 @@ def event_rows(settings: Settings) -> Iterator[dict]:
         if batch["parent_batch_code"]:
             yield {
                 "event_id": stable_uuid(f"event:{settings.seed}:{index}:transform"),
-                "organization_index": index % settings.sizes["organizations"],
+                "organization_index": batch["organization_index"],
                 "event_type": "TRANSFORM",
                 "event_time": f"{date_value}T14:15:00+06:00",
                 "source_batch_code": batch["parent_batch_code"],
@@ -305,11 +313,12 @@ def event_rows(settings: Settings) -> Iterator[dict]:
         if batch["product_index"] is not None:
             yield {
                 "event_id": stable_uuid(f"event:{settings.seed}:{index}:produce"),
-                "organization_index": index % settings.sizes["organizations"],
+                "organization_index": batch["organization_index"],
                 "event_type": "PRODUCE",
                 "event_time": f"{date_value}T18:45:00+06:00",
                 "input_batch_code": batch_code,
                 "product_index": batch["product_index"],
+                "product_code": f"BD-MED-{batch['product_index'] + 1:05d}",
                 "facility_index": (batch["origin_facility_index"] + 2) % facility_count,
                 "quantity": {"value": round(batch["quantity_kg"] * 1000 / 0.5, 3), "unit": "units"},
                 "source_system": "MES_FINISHED_GOODS",
@@ -329,7 +338,7 @@ def document_rows(settings: Settings) -> Iterator[dict]:
         document_id = stable_uuid(f"doc:{settings.seed}:{index}:certificate")
         yield {
             "document_id": document_id,
-            "organization_index": index % settings.sizes["organizations"],
+            "organization_index": batch["organization_index"],
             "document_type": "batch_certificate",
             "file_name": f"supplier_{index % settings.sizes['suppliers'] + 1:05d}_batch_{index + 1:08d}.pdf",
             "mime_type": "application/pdf",
@@ -346,7 +355,7 @@ def document_rows(settings: Settings) -> Iterator[dict]:
         }
         yield {
             "document_id": stable_uuid(f"doc:{settings.seed}:{index}:manifest"),
-            "organization_index": index % settings.sizes["organizations"],
+            "organization_index": batch["organization_index"],
             "document_type": rng.choice(["shipping_manifest", "invoice", "quality_inspection"]),
             "file_name": f"shipment_{index + 1:08d}.{rng.choice(['xlsx', 'csv', 'docx'])}",
             "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -361,7 +370,7 @@ def document_rows(settings: Settings) -> Iterator[dict]:
         }
         yield {
             "record_id": stable_uuid(f"record:{settings.seed}:{index}:batch"),
-            "organization_index": index % settings.sizes["organizations"],
+            "organization_index": batch["organization_index"],
             "document_id": document_id,
             "field_name": "batch_identifier",
             "observed_value": observed,
@@ -375,19 +384,30 @@ def document_rows(settings: Settings) -> Iterator[dict]:
 
 def incident_rows(settings: Settings) -> Iterator[dict]:
     batch_count = settings.sizes["batches"]
+    batches = list(batch_rows(settings))
+    children: dict[str, list[str]] = {}
+    for batch in batches:
+        if batch["parent_batch_code"]:
+            children.setdefault(batch["parent_batch_code"], []).append(batch["batch_code"])
     step = max(1, batch_count // settings.sizes["incidents"])
     for index in range(settings.sizes["incidents"]):
         contaminated_index = min(batch_count - 1, index * step + step // 3)
-        affected = [
-            contaminated_index + offset
-            for offset in range(0, min(18, batch_count - contaminated_index), 3)
-        ]
+        contaminated_code = f"BATCH-BD-{contaminated_index + 1:08d}"
+        affected: list[str] = []
+        queue = [contaminated_code]
+        while queue and len(affected) < 18:
+            current = queue.pop(0)
+            for child in children.get(current, []):
+                affected.append(child)
+                queue.append(child)
+                if len(affected) >= 18:
+                    break
         yield {
             "incident_id": f"INC-BD-{settings.seed}-{index + 1:04d}",
             "tenant_index": index % settings.sizes["organizations"],
             "severity": "high" if index % 3 else "critical",
             "contaminated_batch_code": f"BATCH-BD-{contaminated_index + 1:08d}",
-            "expected_affected_batch_codes": [f"BATCH-BD-{item + 1:08d}" for item in affected],
+            "expected_affected_batch_codes": affected,
             "expected_review_required": True,
             "scenario": "potential_api_contamination",
             "synthetic": True,

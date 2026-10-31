@@ -101,7 +101,7 @@ class SQLiteCanonicalStore:
 
     def __init__(self, path: str | Path = ":memory:") -> None:
         self.path = str(path)
-        self.connection = sqlite3.connect(self.path)
+        self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(SCHEMA)
 

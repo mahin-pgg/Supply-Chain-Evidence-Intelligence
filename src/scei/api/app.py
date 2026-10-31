@@ -11,6 +11,8 @@ from scei.ingestion.models import (
     IngestionReceipt,
     SourceDocumentIngest,
 )
+from scei.investigation.api_models import ContaminationInvestigationRequest, GenealogyQuery
+from scei.investigation.genealogy import GenealogyEngine
 from scei.storage.sqlite import SQLiteCanonicalStore
 
 
@@ -20,6 +22,7 @@ def create_app(store: SQLiteCanonicalStore | None = None) -> FastAPI:
         Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     canonical_store = store or SQLiteCanonicalStore(database_path)
     app = FastAPI(title="Supply Chain Evidence Intelligence", version="0.1.0")
+    app.state.canonical_store = canonical_store
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -56,6 +59,21 @@ def create_app(store: SQLiteCanonicalStore | None = None) -> FastAPI:
             accepted=True,
             duplicate=not accepted,
             resource_type="canonical_event",
+        )
+
+    @app.post("/v1/investigations/contamination")
+    def investigate_contamination(request: ContaminationInvestigationRequest):
+        return GenealogyEngine(canonical_store).analyze_contamination(
+            request.organization_id, request.contaminated_node_id, max_hops=request.max_hops
+        )
+
+    @app.post("/v1/genealogy/traverse")
+    def traverse_genealogy(request: GenealogyQuery):
+        return GenealogyEngine(canonical_store).traverse(
+            request.organization_id,
+            request.node_id,
+            direction=request.direction,
+            max_hops=request.max_hops,
         )
 
     return app
