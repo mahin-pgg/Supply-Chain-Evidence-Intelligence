@@ -1,0 +1,1 @@
+"""Canonical local storage adapters."""

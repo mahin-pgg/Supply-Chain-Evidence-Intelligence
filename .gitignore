@@ -16,6 +16,7 @@ build/
 # Local infrastructure data
 infra/data/
 infra/logs/
+data/local/
 
 # Generated synthetic datasets and reports
 data/generated/
