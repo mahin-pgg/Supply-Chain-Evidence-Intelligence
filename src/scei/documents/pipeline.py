@@ -7,6 +7,7 @@ from uuid import UUID, uuid5
 
 from scei.documents.extractor import DocumentExtractor
 from scei.documents.models import ExtractedDocument
+from scei.documents.semantic import SemanticDocumentEnricher
 from scei.ingestion.models import EvidenceRecordIngest, SourceDocumentIngest
 from scei.storage.sqlite import SQLiteCanonicalStore
 
@@ -15,10 +16,14 @@ class DocumentIngestionPipeline:
     """Persist an original document plus all deterministic claims with provenance."""
 
     def __init__(
-        self, store: SQLiteCanonicalStore, extractor: DocumentExtractor | None = None
+        self,
+        store: SQLiteCanonicalStore,
+        extractor: DocumentExtractor | None = None,
+        semantic_enricher: SemanticDocumentEnricher | None = None,
     ) -> None:
         self.store = store
         self.extractor = extractor or DocumentExtractor()
+        self.semantic_enricher = semantic_enricher
 
     def ingest_path(
         self, path: str | Path, organization_id: UUID, document_id: UUID
@@ -26,6 +31,8 @@ class DocumentIngestionPipeline:
         file_path = Path(path)
         content = file_path.read_bytes()
         extracted = self.extractor.extract(file_path, document_id, organization_id)
+        if self.semantic_enricher is not None and extracted.segments:
+            extracted = self.semantic_enricher.enrich(extracted)
         document = SourceDocumentIngest(
             organization_id=organization_id,
             document_id=document_id,

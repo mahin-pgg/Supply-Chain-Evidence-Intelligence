@@ -31,6 +31,17 @@ Python, FastAPI, PostgreSQL, Neo4j, Qdrant, OpenSearch, Kafka/Redpanda, MinIO/S3
 
 See [architecture decision 0001](docs/architecture/0001-system-boundaries.md) and the [domain model](docs/architecture/domain-model.md).
 
+## Local semantic document enrichment
+
+Deterministic extraction is always performed first. To enable optional Ollama enrichment for uploaded documents, set the feature flag before starting the API:
+
+```powershell
+$env:SCEI_ENABLE_SEMANTIC = "1"
+\.venv\Scripts\python.exe -m uvicorn scei.api.app:app --reload
+```
+
+The local default model is `qwen3:4b`. The semantic layer only persists claims that can be anchored to extracted source text; unsupported model output is discarded. Override the model with `OLLAMA_MODEL` when needed.
+
 ## Synthetic development data
 
 The Bangladesh-oriented data generator is documented in [docs/data/README.md](docs/data/README.md). It produces deterministic, gzip-compressed JSONL with realistic supply-chain messiness and ground-truth incident impact. Generated data is intentionally ignored by Git.

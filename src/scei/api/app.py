@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, File, Form, UploadFile
 
 from scei.documents.pipeline import DocumentIngestionPipeline
+from scei.documents.semantic import SemanticDocumentEnricher
 from scei.ingestion.models import (
     EventIngestEnvelope,
     EvidenceRecordIngest,
@@ -18,11 +19,20 @@ from scei.investigation.genealogy import GenealogyEngine
 from scei.storage.sqlite import SQLiteCanonicalStore
 
 
-def create_app(store: SQLiteCanonicalStore | None = None) -> FastAPI:
+def create_app(
+    store: SQLiteCanonicalStore | None = None,
+    semantic_enricher: SemanticDocumentEnricher | None = None,
+) -> FastAPI:
     database_path = os.getenv("SCEI_SQLITE_PATH", "data/local/scei.db")
     if store is None and database_path != ":memory:":
         Path(database_path).parent.mkdir(parents=True, exist_ok=True)
     canonical_store = store or SQLiteCanonicalStore(database_path)
+    if semantic_enricher is None and os.getenv("SCEI_ENABLE_SEMANTIC", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        semantic_enricher = SemanticDocumentEnricher()
     app = FastAPI(title="Supply Chain Evidence Intelligence", version="0.1.0")
     app.state.canonical_store = canonical_store
 
@@ -79,7 +89,9 @@ def create_app(store: SQLiteCanonicalStore | None = None) -> FastAPI:
             temporary.write(await file.read())
             temporary.flush()
         try:
-            extracted = DocumentIngestionPipeline(canonical_store).ingest_path(
+            extracted = DocumentIngestionPipeline(
+                canonical_store, semantic_enricher=semantic_enricher
+            ).ingest_path(
                 temporary_path, organization_id, document_id
             )
         finally:
