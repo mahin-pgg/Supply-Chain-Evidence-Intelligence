@@ -14,7 +14,7 @@ class OllamaUnavailable(RuntimeError):
 @dataclass(frozen=True)
 class OllamaClient:
     base_url: str = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-    model: str = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+    model: str = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
     timeout_seconds: float = 60.0
 
     def generate_json(self, prompt: str, schema: dict[str, object]) -> dict[str, object]:
