@@ -30,3 +30,7 @@ Phase 1 - repository bootstrap and architecture contracts.
 Python, FastAPI, PostgreSQL, Neo4j, Qdrant, OpenSearch, Kafka/Redpanda, MinIO/S3, Temporal, LangGraph, Ollama, Docker Compose, and OpenTelemetry.
 
 See [architecture decision 0001](docs/architecture/0001-system-boundaries.md) and the [domain model](docs/architecture/domain-model.md).
+
+## Synthetic development data
+
+The Bangladesh-oriented data generator is documented in [docs/data/README.md](docs/data/README.md). It produces deterministic, gzip-compressed JSONL with realistic supply-chain messiness and ground-truth incident impact. Generated data is intentionally ignored by Git.
