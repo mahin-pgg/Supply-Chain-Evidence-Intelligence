@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from scei.graph.models import GraphEdge, GraphNode
 from scei.ingestion.models import EventIngestEnvelope, EvidenceRecordIngest, SourceDocumentIngest
 
 SCHEMA = """
@@ -60,6 +61,34 @@ CREATE TABLE IF NOT EXISTS canonical_events (
 
 CREATE INDEX IF NOT EXISTS idx_events_tenant_time ON canonical_events (organization_id, event_time);
 CREATE INDEX IF NOT EXISTS idx_evidence_tenant_document ON evidence_records (organization_id, document_id);
+
+CREATE TABLE IF NOT EXISTS graph_nodes (
+    organization_id TEXT NOT NULL,
+    node_id TEXT NOT NULL,
+    node_type TEXT NOT NULL,
+    label TEXT NOT NULL,
+    attributes_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (organization_id, node_id)
+);
+
+CREATE TABLE IF NOT EXISTS graph_edges (
+    organization_id TEXT NOT NULL,
+    edge_id TEXT NOT NULL,
+    source_node_id TEXT NOT NULL,
+    target_node_id TEXT NOT NULL,
+    edge_type TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    relationship_state TEXT NOT NULL,
+    quantity_json TEXT,
+    provenance_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (organization_id, edge_id),
+    UNIQUE (organization_id, event_id, source_node_id, target_node_id, edge_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_edges_tenant_source ON graph_edges (organization_id, source_node_id);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_tenant_target ON graph_edges (organization_id, target_node_id);
 """
 
 
@@ -271,4 +300,54 @@ class SQLiteCanonicalStore:
             "SELECT * FROM canonical_events WHERE organization_id = ? ORDER BY event_time LIMIT ?",
             (str(organization_id), limit),
         )
+        return [dict(row) for row in rows]
+
+    def upsert_graph_node(self, node: GraphNode) -> None:
+        self.connection.execute(
+            """INSERT INTO graph_nodes (organization_id, node_id, node_type, label, attributes_json)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (organization_id, node_id) DO UPDATE SET label=excluded.label, attributes_json=excluded.attributes_json""",
+            (
+                str(node.organization_id),
+                str(node.node_id),
+                node.node_type,
+                node.label,
+                _json(node.attributes),
+            ),
+        )
+        self.connection.commit()
+
+    def add_graph_edge(self, edge: GraphEdge) -> bool:
+        cursor = self.connection.execute(
+            """INSERT OR IGNORE INTO graph_edges
+            (organization_id, edge_id, source_node_id, target_node_id, edge_type, event_id, relationship_state, quantity_json, provenance_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(edge.organization_id),
+                str(edge.edge_id),
+                str(edge.source_node_id),
+                str(edge.target_node_id),
+                edge.edge_type,
+                str(edge.event_id),
+                edge.relationship_state.value,
+                _json(edge.quantity) if edge.quantity else None,
+                _json(edge.provenance),
+            ),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def list_graph_edges(
+        self, organization_id: UUID, source_node_id: UUID | None = None, limit: int = 100
+    ) -> list[dict[str, object]]:
+        if source_node_id is None:
+            rows = self.connection.execute(
+                "SELECT * FROM graph_edges WHERE organization_id = ? ORDER BY created_at LIMIT ?",
+                (str(organization_id), limit),
+            )
+        else:
+            rows = self.connection.execute(
+                "SELECT * FROM graph_edges WHERE organization_id = ? AND source_node_id = ? ORDER BY created_at LIMIT ?",
+                (str(organization_id), str(source_node_id), limit),
+            )
         return [dict(row) for row in rows]
