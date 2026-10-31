@@ -19,6 +19,7 @@ documents = [
   "pypdf>=5,<7",
   "openpyxl>=3.1,<4",
   "python-docx>=1.1,<2",
+  "python-multipart>=0.0.20,<1",
 ]
 dev = [
   "pytest>=8.3,<9",
@@ -27,6 +28,7 @@ dev = [
   "pypdf>=5,<7",
   "openpyxl>=3.1,<4",
   "python-docx>=1.1,<2",
+  "python-multipart>=0.0.20,<1",
   "ruff>=0.8,<1",
   "mypy>=1.13,<2",
 ]

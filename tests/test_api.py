@@ -22,3 +22,14 @@ def test_health_and_ingestion_endpoint():
     )
     assert response.status_code == 202
     assert response.json()["duplicate"] is False
+
+
+def test_document_upload_endpoint():
+    client = TestClient(create_app(SQLiteCanonicalStore()))
+    response = client.post(
+        "/v1/documents/ingest",
+        data={"organization_id": "00000000-0000-0000-0000-000000000001"},
+        files={"file": ("certificate.txt", b"LOT-A-102 received 500 kg", "text/plain")},
+    )
+    assert response.status_code == 200
+    assert response.json()["claims"] == 2

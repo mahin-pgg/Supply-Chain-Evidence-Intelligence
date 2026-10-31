@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from uuid import UUID, uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, UploadFile
 
+from scei.documents.pipeline import DocumentIngestionPipeline
 from scei.ingestion.models import (
     EventIngestEnvelope,
     EvidenceRecordIngest,
@@ -60,6 +62,35 @@ def create_app(store: SQLiteCanonicalStore | None = None) -> FastAPI:
             duplicate=not accepted,
             resource_type="canonical_event",
         )
+
+    @app.post("/v1/documents/ingest")
+    async def ingest_uploaded_document(
+        organization_id: UUID = Form(...),  # noqa: B008
+        file: UploadFile = File(...),  # noqa: B008
+        document_id: UUID | None = Form(default=None),  # noqa: B008
+    ):
+        import tempfile
+
+        document_id = document_id or uuid4()
+        suffix = Path(file.filename or "document.bin").suffix
+        temporary_path: Path
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(await file.read())
+            temporary.flush()
+        try:
+            extracted = DocumentIngestionPipeline(canonical_store).ingest_path(
+                temporary_path, organization_id, document_id
+            )
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        return {
+            "document_id": document_id,
+            "kind": extracted.kind.value,
+            "claims": len(extracted.claims),
+            "requires_ocr": extracted.requires_ocr,
+            "warnings": extracted.warnings,
+        }
 
     @app.post("/v1/investigations/contamination")
     def investigate_contamination(request: ContaminationInvestigationRequest):
