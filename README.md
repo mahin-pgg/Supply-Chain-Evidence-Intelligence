@@ -56,6 +56,8 @@ To replay canonical events into the local graph after loading the generated data
 
 Projection uses exact tenant-scoped identifiers by default. Unresolved or corrupted identifiers are reported as gaps for review instead of being guessed into graph relationships.
 
+Projection gaps are persisted in the resolution review queue. Use `GET /v1/reviews/resolution` to list tenant-scoped pending reviews and `POST /v1/reviews/resolution/{review_id}` to approve or reject a proposed resolution.
+
 ## Synthetic development data
 
 The Bangladesh-oriented data generator is documented in [docs/data/README.md](docs/data/README.md). It produces deterministic, gzip-compressed JSONL with realistic supply-chain messiness and ground-truth incident impact. Generated data is intentionally ignored by Git.

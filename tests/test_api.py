@@ -165,3 +165,42 @@ def test_batch_investigation_combines_evidence_and_graph_impact():
     assert body["evidence"][0]["citation"]["file_name"] == "batch.pdf"
     assert body["contamination_impact"]["confirmed_products"][0]["product_id"] == str(product_id)
     store.close()
+
+
+def test_resolution_review_queue_is_tenant_scoped_and_decidable():
+    store = SQLiteCanonicalStore()
+    client = TestClient(create_app(store))
+    organization_id = uuid4()
+    other_organization_id = uuid4()
+    review_id, event_id = uuid4(), uuid4()
+    store.add_resolution_review(
+        organization_id=organization_id,
+        review_id=review_id,
+        event_id=event_id,
+        field_name="batch_code",
+        entity_type="batch",
+        observed_value="BATCH-BD-O123",
+        candidates=[],
+        rationale="No exact identifier match.",
+    )
+    response = client.get(
+        "/v1/reviews/resolution", params={"organization_id": str(other_organization_id)}
+    )
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
+    response = client.get(
+        "/v1/reviews/resolution", params={"organization_id": str(organization_id)}
+    )
+    assert response.json()["total"] == 1
+    response = client.post(
+        f"/v1/reviews/resolution/{review_id}",
+        params={"organization_id": str(organization_id)},
+        json={"action": "reject", "reviewer_id": "qa-user-1"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "rejected"
+    assert client.get(
+        "/v1/reviews/resolution",
+        params={"organization_id": str(organization_id), "status": "pending"},
+    ).json()["total"] == 0
+    store.close()

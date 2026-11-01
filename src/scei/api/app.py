@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, File, Form, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 
 from scei.documents.pipeline import DocumentIngestionPipeline
 from scei.documents.semantic import SemanticDocumentEnricher
@@ -22,6 +24,12 @@ from scei.investigation.api_models import (
 from scei.investigation.genealogy import GenealogyEngine
 from scei.retrieval.api_models import EventSearchResponse, EvidenceSearchResponse, bounded_limit
 from scei.storage.sqlite import SQLiteCanonicalStore
+
+
+class ResolutionReviewDecision(BaseModel):
+    action: Literal["approve", "reject"]
+    reviewer_id: str = Field(min_length=1, max_length=128)
+    selected_entity_id: UUID | None = None
 
 
 def create_app(
@@ -69,6 +77,34 @@ def create_app(
         return EventSearchResponse(
             organization_id=organization_id, query=q, total=len(results), results=results
         )
+
+    @app.get("/v1/reviews/resolution")
+    def list_resolution_reviews(
+        organization_id: UUID,
+        status: Literal["pending", "approved", "rejected"] = "pending",
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> dict[str, object]:
+        results = canonical_store.list_resolution_reviews(organization_id, status, limit)
+        return {"organization_id": organization_id, "status": status, "total": len(results), "results": results}
+
+    @app.post("/v1/reviews/resolution/{review_id}")
+    def decide_resolution_review(
+        review_id: UUID,
+        organization_id: UUID,
+        decision: ResolutionReviewDecision,
+    ) -> dict[str, object]:
+        if decision.action == "approve" and decision.selected_entity_id is None:
+            raise HTTPException(status_code=422, detail="selected_entity_id is required for approval")
+        result = canonical_store.resolve_resolution_review(
+            organization_id,
+            review_id,
+            "approved" if decision.action == "approve" else "rejected",
+            decision.reviewer_id,
+            decision.selected_entity_id,
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="pending review not found")
+        return result
 
     @app.post("/v1/investigations/batch")
     def investigate_batch(request: BatchInvestigationRequest) -> dict[str, object]:

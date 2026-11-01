@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from uuid import uuid5
 
 from scei.graph.projector import GenealogyProjector
 from scei.ingestion.models import EventIngestEnvelope
@@ -62,7 +63,19 @@ class GraphProjectionService:
             value = event.payload.get(field)
             if value:
                 entity_type = "product" if field == "product_code" else "batch"
-                bindings[str(value)] = self.resolver.resolve(
+                decision = self.resolver.resolve(
                     event.organization_id, entity_type, str(value), allow_fuzzy=False
                 )
+                bindings[str(value)] = decision
+                if decision.selected_entity_id is None:
+                    self.store.add_resolution_review(
+                        organization_id=event.organization_id,
+                        review_id=uuid5(event.event_id, f"resolution:{field}:{value}"),
+                        event_id=event.event_id,
+                        field_name=field,
+                        entity_type=entity_type,
+                        observed_value=str(value),
+                        candidates=[candidate.model_dump(mode="json") for candidate in decision.candidates],
+                        rationale=decision.rationale,
+                    )
         return bindings

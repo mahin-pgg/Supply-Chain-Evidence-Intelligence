@@ -91,6 +91,27 @@ CREATE TABLE IF NOT EXISTS graph_edges (
 
 CREATE INDEX IF NOT EXISTS idx_graph_edges_tenant_source ON graph_edges (organization_id, source_node_id);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_tenant_target ON graph_edges (organization_id, target_node_id);
+
+CREATE TABLE IF NOT EXISTS resolution_reviews (
+    organization_id TEXT NOT NULL,
+    review_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    observed_value TEXT NOT NULL,
+    candidates_json TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    status TEXT NOT NULL,
+    selected_entity_id TEXT,
+    reviewer_id TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TEXT,
+    PRIMARY KEY (organization_id, review_id),
+    UNIQUE (organization_id, event_id, field_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_tenant_status
+    ON resolution_reviews (organization_id, status, created_at);
 """
 
 
@@ -460,6 +481,84 @@ class SQLiteCanonicalStore:
             if any(candidate == normalized_label for candidate in candidates):
                 return UUID(row["node_id"])
         return None
+
+    def add_resolution_review(
+        self,
+        organization_id: UUID,
+        review_id: UUID,
+        event_id: UUID,
+        field_name: str,
+        entity_type: str,
+        observed_value: str,
+        candidates: list[dict[str, object]],
+        rationale: str,
+    ) -> bool:
+        cursor = self.connection.execute(
+            """INSERT OR IGNORE INTO resolution_reviews
+               (organization_id, review_id, event_id, field_name, entity_type,
+                observed_value, candidates_json, rationale, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')""",
+            (
+                str(organization_id),
+                str(review_id),
+                str(event_id),
+                field_name,
+                entity_type,
+                observed_value,
+                _json(candidates),
+                rationale,
+            ),
+        )
+        if not self._defer_commits:
+            self.connection.commit()
+        return cursor.rowcount == 1
+
+    def list_resolution_reviews(
+        self, organization_id: UUID, status: str = "pending", limit: int = 100
+    ) -> list[dict[str, object]]:
+        rows = self.connection.execute(
+            """SELECT * FROM resolution_reviews
+               WHERE organization_id = ? AND status = ?
+               ORDER BY created_at, review_id LIMIT ?""",
+            (str(organization_id), status, limit),
+        )
+        return [
+            {
+                **dict(row),
+                "candidates": json.loads(row["candidates_json"]),
+            }
+            for row in rows
+        ]
+
+    def resolve_resolution_review(
+        self,
+        organization_id: UUID,
+        review_id: UUID,
+        status: str,
+        reviewer_id: str,
+        selected_entity_id: UUID | None = None,
+    ) -> dict[str, object] | None:
+        cursor = self.connection.execute(
+            """UPDATE resolution_reviews
+               SET status = ?, selected_entity_id = ?, reviewer_id = ?,
+                   reviewed_at = CURRENT_TIMESTAMP
+               WHERE organization_id = ? AND review_id = ? AND status = 'pending'""",
+            (
+                status,
+                str(selected_entity_id) if selected_entity_id else None,
+                reviewer_id,
+                str(organization_id),
+                str(review_id),
+            ),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            return None
+        row = self.connection.execute(
+            "SELECT * FROM resolution_reviews WHERE organization_id = ? AND review_id = ?",
+            (str(organization_id), str(review_id)),
+        ).fetchone()
+        return {**dict(row), "candidates": json.loads(row["candidates_json"])}
 
     def upsert_graph_node(self, node: GraphNode) -> None:
         self.connection.execute(
