@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from scei.documents.pipeline import DocumentIngestionPipeline
 from scei.documents.semantic import SemanticDocumentEnricher
+from scei.graph.application_service import ResolutionApplicationError, ResolutionApplicationService
 from scei.ingestion.models import (
     EventIngestEnvelope,
     EvidenceRecordIngest,
@@ -30,6 +31,7 @@ class ResolutionReviewDecision(BaseModel):
     action: Literal["approve", "reject"]
     reviewer_id: str = Field(min_length=1, max_length=128)
     selected_entity_id: UUID | None = None
+    allow_out_of_candidates: bool = False
 
 
 def create_app(
@@ -81,7 +83,9 @@ def create_app(
     @app.get("/v1/reviews/resolution")
     def list_resolution_reviews(
         organization_id: UUID,
-        status: Literal["pending", "approved", "rejected"] = "pending",
+        status: Literal[
+            "pending", "approved", "rejected", "applying", "applied", "application_failed"
+        ] = "pending",
         limit: int = Query(default=50, ge=1, le=100),
     ) -> dict[str, object]:
         results = canonical_store.list_resolution_reviews(organization_id, status, limit)
@@ -93,8 +97,30 @@ def create_app(
         organization_id: UUID,
         decision: ResolutionReviewDecision,
     ) -> dict[str, object]:
+        review = canonical_store.get_resolution_review(organization_id, review_id)
+        if review is None:
+            raise HTTPException(status_code=404, detail="review not found")
+        if review["status"] != "pending":
+            raise HTTPException(status_code=409, detail="review has already been decided")
         if decision.action == "approve" and decision.selected_entity_id is None:
             raise HTTPException(status_code=422, detail="selected_entity_id is required for approval")
+        if decision.action == "approve":
+            if not canonical_store.entity_belongs_to_tenant(
+                organization_id, decision.selected_entity_id
+            ):
+                raise HTTPException(status_code=422, detail="selected entity is outside the tenant")
+            candidate_ids = {
+                str(candidate.get("entity_id")) for candidate in review["candidates"]
+            }
+            if (
+                candidate_ids
+                and str(decision.selected_entity_id) not in candidate_ids
+                and not decision.allow_out_of_candidates
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="selected entity is not a candidate; explicitly set allow_out_of_candidates",
+                )
         result = canonical_store.resolve_resolution_review(
             organization_id,
             review_id,
@@ -105,6 +131,13 @@ def create_app(
         if result is None:
             raise HTTPException(status_code=404, detail="pending review not found")
         return result
+
+    @app.post("/v1/reviews/resolution/{review_id}/apply")
+    def apply_resolution_review(review_id: UUID, organization_id: UUID) -> dict[str, object]:
+        try:
+            return ResolutionApplicationService(canonical_store).apply(organization_id, review_id)
+        except ResolutionApplicationError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.post("/v1/investigations/batch")
     def investigate_batch(request: BatchInvestigationRequest) -> dict[str, object]:

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from uuid import uuid5
+from uuid import UUID, uuid5
 
 from scei.graph.projector import GenealogyProjector
 from scei.ingestion.models import EventIngestEnvelope
-from scei.resolution.models import EntityProfile
+from scei.resolution.models import EntityProfile, ResolutionDecision, ResolutionState
 from scei.resolution.resolver import EntityResolver
 from scei.storage.sqlite import SQLiteCanonicalStore
 
@@ -63,9 +63,24 @@ class GraphProjectionService:
             value = event.payload.get(field)
             if value:
                 entity_type = "product" if field == "product_code" else "batch"
-                decision = self.resolver.resolve(
-                    event.organization_id, entity_type, str(value), allow_fuzzy=False
+                mapping = self.store.get_resolution_mapping(
+                    event.organization_id, str(value), field, entity_type
                 )
+                if mapping is not None:
+                    decision = ResolutionDecision(
+                        organization_id=event.organization_id,
+                        entity_type=entity_type,
+                        observed_value=str(value),
+                        selected_entity_id=UUID(str(mapping["canonical_entity_id"])),
+                        state=ResolutionState.VERIFIED,
+                        score=1.0,
+                        review_required=False,
+                        rationale=f"Applied review mapping {mapping['source_review_id']}.",
+                    )
+                else:
+                    decision = self.resolver.resolve(
+                        event.organization_id, entity_type, str(value), allow_fuzzy=False
+                    )
                 bindings[str(value)] = decision
                 if decision.selected_entity_id is None:
                     self.store.add_resolution_review(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
@@ -112,6 +113,26 @@ CREATE TABLE IF NOT EXISTS resolution_reviews (
 
 CREATE INDEX IF NOT EXISTS idx_reviews_tenant_status
     ON resolution_reviews (organization_id, status, created_at);
+
+CREATE TABLE IF NOT EXISTS resolution_mappings (
+    organization_id TEXT NOT NULL,
+    mapping_id TEXT NOT NULL,
+    observed_identifier TEXT NOT NULL,
+    field_name TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    canonical_entity_id TEXT NOT NULL,
+    source_review_id TEXT NOT NULL,
+    reviewer_id TEXT NOT NULL,
+    decision_at TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (organization_id, mapping_id),
+    UNIQUE (organization_id, source_review_id),
+    UNIQUE (organization_id, observed_identifier, field_name, entity_type, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mappings_lookup
+    ON resolution_mappings (organization_id, observed_identifier, field_name, entity_type, version);
 """
 
 
@@ -127,21 +148,39 @@ class SQLiteCanonicalStore:
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
         self._defer_commits = False
+        self.application_lock = threading.Lock()
         self.connection.executescript(SCHEMA)
+        self._ensure_review_columns()
 
     def close(self) -> None:
         self.connection.close()
+
+    def _ensure_review_columns(self) -> None:
+        columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(resolution_reviews)")
+        }
+        for name, definition in {
+            "application_attempts": "INTEGER NOT NULL DEFAULT 0",
+            "application_error": "TEXT",
+            "applied_at": "TEXT",
+        }.items():
+            if name not in columns:
+                self.connection.execute(f"ALTER TABLE resolution_reviews ADD COLUMN {name} {definition}")
+        self.connection.commit()
 
     @contextmanager
     def batch_write(self):
         """Group many graph writes into one transaction for local backfills."""
         previous = self._defer_commits
+        outermost = not previous
         self._defer_commits = True
         try:
             yield
-            self.connection.commit()
+            if outermost:
+                self.connection.commit()
         except Exception:
-            self.connection.rollback()
+            if outermost:
+                self.connection.rollback()
             raise
         finally:
             self._defer_commits = previous
@@ -166,7 +205,8 @@ class SQLiteCanonicalStore:
                 _json(document.metadata),
             ),
         )
-        self.connection.commit()
+        if not self._defer_commits:
+            self.connection.commit()
         return cursor.rowcount == 1
 
     def add_evidence(self, record: EvidenceRecordIngest) -> bool:
@@ -513,6 +553,15 @@ class SQLiteCanonicalStore:
             self.connection.commit()
         return cursor.rowcount == 1
 
+    def get_resolution_review(self, organization_id: UUID, review_id: UUID) -> dict[str, object] | None:
+        row = self.connection.execute(
+            "SELECT * FROM resolution_reviews WHERE organization_id = ? AND review_id = ?",
+            (str(organization_id), str(review_id)),
+        ).fetchone()
+        if row is None:
+            return None
+        return {**dict(row), "candidates": json.loads(row["candidates_json"])}
+
     def list_resolution_reviews(
         self, organization_id: UUID, status: str = "pending", limit: int = 100
     ) -> list[dict[str, object]]:
@@ -559,6 +608,117 @@ class SQLiteCanonicalStore:
             (str(organization_id), str(review_id)),
         ).fetchone()
         return {**dict(row), "candidates": json.loads(row["candidates_json"])}
+
+    def entity_belongs_to_tenant(self, organization_id: UUID, entity_id: UUID) -> bool:
+        return (
+            self.connection.execute(
+                "SELECT 1 FROM graph_nodes WHERE organization_id = ? AND node_id = ?",
+                (str(organization_id), str(entity_id)),
+            ).fetchone()
+            is not None
+        )
+
+    def add_resolution_mapping(
+        self,
+        organization_id: UUID,
+        mapping_id: UUID,
+        observed_identifier: str,
+        field_name: str,
+        entity_type: str,
+        canonical_entity_id: UUID,
+        source_review_id: UUID,
+        reviewer_id: str,
+        decision_at: str,
+    ) -> dict[str, object]:
+        existing = self.connection.execute(
+            """SELECT * FROM resolution_mappings
+               WHERE organization_id = ? AND source_review_id = ?""",
+            (str(organization_id), str(source_review_id)),
+        ).fetchone()
+        if existing is not None:
+            return dict(existing)
+        version = int(
+            self.connection.execute(
+                """SELECT COALESCE(MAX(version), 0) + 1 FROM resolution_mappings
+                   WHERE organization_id = ? AND observed_identifier = ?
+                     AND field_name = ? AND entity_type = ?""",
+                (str(organization_id), observed_identifier, field_name, entity_type),
+            ).fetchone()[0]
+        )
+        self.connection.execute(
+            """INSERT INTO resolution_mappings
+               (organization_id, mapping_id, observed_identifier, field_name, entity_type,
+                canonical_entity_id, source_review_id, reviewer_id, decision_at, version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(organization_id), str(mapping_id), observed_identifier, field_name,
+                entity_type, str(canonical_entity_id), str(source_review_id), reviewer_id,
+                decision_at, version,
+            ),
+        )
+        if not self._defer_commits:
+            self.connection.commit()
+        return dict(
+            self.connection.execute(
+                "SELECT * FROM resolution_mappings WHERE organization_id = ? AND mapping_id = ?",
+                (str(organization_id), str(mapping_id)),
+            ).fetchone()
+        )
+
+    def get_resolution_mapping(
+        self, organization_id: UUID, observed_identifier: str, field_name: str, entity_type: str
+    ) -> dict[str, object] | None:
+        row = self.connection.execute(
+            """SELECT * FROM resolution_mappings
+               WHERE organization_id = ? AND observed_identifier = ?
+                 AND field_name = ? AND entity_type = ?
+               ORDER BY version DESC LIMIT 1""",
+            (str(organization_id), observed_identifier, field_name, entity_type),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_events_referencing(
+        self, organization_id: UUID, field_name: str, observed_identifier: str
+    ) -> list[EventIngestEnvelope]:
+        events = self.list_event_envelopes(organization_id)
+        return [
+            event for event in events if event.payload.get(field_name) == observed_identifier
+        ]
+
+    def begin_review_application(self, organization_id: UUID, review_id: UUID) -> dict[str, object] | None:
+        cursor = self.connection.execute(
+            """UPDATE resolution_reviews
+               SET status = 'applying', application_attempts = application_attempts + 1,
+                   application_error = NULL
+               WHERE organization_id = ? AND review_id = ?
+                 AND status IN ('approved', 'application_failed', 'applying')""",
+            (str(organization_id), str(review_id)),
+        )
+        self.connection.commit()
+        if cursor.rowcount != 1:
+            return None
+        return self.get_resolution_review(organization_id, review_id)
+
+    def mark_review_applied(self, organization_id: UUID, review_id: UUID) -> None:
+        self.connection.execute(
+            """UPDATE resolution_reviews
+               SET status = 'applied', applied_at = CURRENT_TIMESTAMP, application_error = NULL
+               WHERE organization_id = ? AND review_id = ? AND status = 'applying'""",
+            (str(organization_id), str(review_id)),
+        )
+        if not self._defer_commits:
+            self.connection.commit()
+
+    def mark_review_application_failed(
+        self, organization_id: UUID, review_id: UUID, error: str
+    ) -> None:
+        self.connection.execute(
+            """UPDATE resolution_reviews
+               SET status = 'application_failed', application_error = ?
+               WHERE organization_id = ? AND review_id = ? AND status = 'applying'""",
+            (error[:2000], str(organization_id), str(review_id)),
+        )
+        self.connection.commit()
 
     def upsert_graph_node(self, node: GraphNode) -> None:
         self.connection.execute(
