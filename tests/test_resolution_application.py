@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -155,4 +156,45 @@ def test_application_failure_is_retryable(monkeypatch):
     assert store.get_resolution_review(tenant, review_id)["status"] == "application_failed"
     result = ResolutionApplicationService(store).apply(tenant, review_id)
     assert result["status"] == "applied"
+    store.close()
+
+
+def test_failure_before_mapping_is_retryable(monkeypatch):
+    tenant = uuid4()
+    entity_id, review_id, review_event_id = uuid4(), uuid4(), uuid4()
+    store = SQLiteCanonicalStore()
+    store.upsert_graph_node(
+        GraphNode(organization_id=tenant, node_id=entity_id, node_type="batch", label="BATCH-REVIEW")
+    )
+    review(store, tenant, review_id, review_event_id)
+    store.resolve_resolution_review(tenant, review_id, "approved", "reviewer-1", entity_id)
+    original = store.add_resolution_mapping
+
+    def fail_once(*args, **kwargs):
+        monkeypatch.setattr(store, "add_resolution_mapping", original)
+        raise RuntimeError("simulated mapping failure")
+
+    monkeypatch.setattr(store, "add_resolution_mapping", fail_once)
+    with pytest.raises(RuntimeError, match="simulated mapping failure"):
+        ResolutionApplicationService(store).apply(tenant, review_id)
+    assert store.get_resolution_review(tenant, review_id)["status"] == "application_failed"
+    assert store.get_resolution_mapping(tenant, "BATCH-REVIEW", "batch_code", "batch") is None
+    assert ResolutionApplicationService(store).apply(tenant, review_id)["status"] == "applied"
+    store.close()
+
+
+def test_concurrent_application_attempts_are_idempotent():
+    tenant = uuid4()
+    entity_id, review_id, review_event_id = uuid4(), uuid4(), uuid4()
+    store = SQLiteCanonicalStore()
+    store.upsert_graph_node(
+        GraphNode(organization_id=tenant, node_id=entity_id, node_type="batch", label="BATCH-REVIEW")
+    )
+    review(store, tenant, review_id, review_event_id)
+    store.resolve_resolution_review(tenant, review_id, "approved", "reviewer-1", entity_id)
+    service = ResolutionApplicationService(store)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: service.apply(tenant, review_id), range(2)))
+    assert [result["status"] for result in results] == ["applied", "applied"]
+    assert store.get_resolution_review(tenant, review_id)["application_attempts"] == 1
     store.close()
