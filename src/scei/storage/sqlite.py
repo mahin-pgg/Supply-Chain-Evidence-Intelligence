@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Iterable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -104,10 +105,25 @@ class SQLiteCanonicalStore:
         self.path = str(path)
         self.connection = sqlite3.connect(self.path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
+        self._defer_commits = False
         self.connection.executescript(SCHEMA)
 
     def close(self) -> None:
         self.connection.close()
+
+    @contextmanager
+    def batch_write(self):
+        """Group many graph writes into one transaction for local backfills."""
+        previous = self._defer_commits
+        self._defer_commits = True
+        try:
+            yield
+            self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            self._defer_commits = previous
 
     def add_document(self, document: SourceDocumentIngest) -> bool:
         cursor = self.connection.execute(
@@ -303,6 +319,34 @@ class SQLiteCanonicalStore:
         )
         return [dict(row) for row in rows]
 
+    def list_event_envelopes(
+        self, organization_id: UUID | None = None, limit: int | None = None
+    ) -> list[EventIngestEnvelope]:
+        """Read canonical events back as validated envelopes for re-projection."""
+        query = "SELECT * FROM canonical_events"
+        parameters: list[object] = []
+        if organization_id is not None:
+            query += " WHERE organization_id = ?"
+            parameters.append(str(organization_id))
+        query += " ORDER BY event_time"
+        if limit is not None:
+            query += " LIMIT ?"
+            parameters.append(limit)
+        rows = self.connection.execute(query, parameters)
+        return [
+            EventIngestEnvelope(
+                organization_id=UUID(row["organization_id"]),
+                event_id=UUID(row["event_id"]),
+                event_type=row["event_type"],
+                event_time=row["event_time"],
+                idempotency_key=row["idempotency_key"],
+                source_system=row["source_system"],
+                payload=json.loads(row["payload_json"]),
+                provenance=json.loads(row["provenance_json"]),
+            )
+            for row in rows
+        ]
+
     def search_evidence(
         self,
         organization_id: UUID,
@@ -430,7 +474,8 @@ class SQLiteCanonicalStore:
                 _json(node.attributes),
             ),
         )
-        self.connection.commit()
+        if not self._defer_commits:
+            self.connection.commit()
 
     def add_graph_edge(self, edge: GraphEdge) -> bool:
         cursor = self.connection.execute(
@@ -449,7 +494,8 @@ class SQLiteCanonicalStore:
                 _json(edge.provenance),
             ),
         )
-        self.connection.commit()
+        if not self._defer_commits:
+            self.connection.commit()
         return cursor.rowcount == 1
 
     def list_graph_edges(

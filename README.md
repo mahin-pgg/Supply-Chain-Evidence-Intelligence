@@ -46,6 +46,16 @@ The local default model is `qwen3:4b`. The semantic layer only persists claims t
 
 Use `POST /v1/investigations/batch` with an organization ID and a batch identifier. The response combines normalized evidence citations with genealogy and contamination impact when the batch has been projected into the graph. Missing graph projections are reported in `gaps` rather than hidden.
 
+To replay canonical events into the local graph after loading the generated dataset:
+
+```powershell
+\.venv\Scripts\python.exe scripts\project_graph.py `
+  --dataset data/generated/bangladesh_pharma_large `
+  --database data/local/scei.db
+```
+
+Projection uses exact tenant-scoped identifiers by default. Unresolved or corrupted identifiers are reported as gaps for review instead of being guessed into graph relationships.
+
 ## Synthetic development data
 
 The Bangladesh-oriented data generator is documented in [docs/data/README.md](docs/data/README.md). It produces deterministic, gzip-compressed JSONL with realistic supply-chain messiness and ground-truth incident impact. Generated data is intentionally ignored by Git.

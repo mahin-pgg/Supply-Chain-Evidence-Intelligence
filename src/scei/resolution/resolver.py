@@ -40,6 +40,7 @@ class EntityResolver:
         district: str | None = None,
         country_code: str | None = None,
         limit: int = 5,
+        allow_fuzzy: bool = True,
     ) -> ResolutionDecision:
         exact_profiles = self._exact_candidates(organization_id, entity_type, observed_value)
         if len(exact_profiles) == 1:
@@ -66,6 +67,14 @@ class EntityResolver:
                 candidates=[candidate],
                 review_required=False,
                 rationale="Unique exact identifier match within the organization.",
+            )
+
+        if not allow_fuzzy:
+            return self._unknown(
+                organization_id,
+                entity_type,
+                observed_value,
+                "No unique exact identifier match was available for safe projection.",
             )
 
         candidates = [
