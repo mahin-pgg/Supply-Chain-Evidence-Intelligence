@@ -9,6 +9,7 @@ from uuid import UUID
 
 from scei.graph.models import GraphEdge, GraphNode
 from scei.ingestion.models import EventIngestEnvelope, EvidenceRecordIngest, SourceDocumentIngest
+from scei.resolution.normalization import normalize_identifier, normalize_text
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -301,6 +302,102 @@ class SQLiteCanonicalStore:
             (str(organization_id), limit),
         )
         return [dict(row) for row in rows]
+
+    def search_evidence(
+        self,
+        organization_id: UUID,
+        query: str,
+        field_name: str | None = None,
+        limit: int = 25,
+    ) -> list[dict[str, object]]:
+        """Search evidence inside one tenant and return citation-ready hits."""
+        normalized_query = normalize_identifier(query)
+        text_query = normalize_text(query)
+        rows = self.connection.execute(
+            """SELECT e.*, d.file_name, d.document_type, d.sha256
+               FROM evidence_records e
+               JOIN source_documents d
+                 ON d.organization_id = e.organization_id AND d.document_id = e.document_id
+              WHERE e.organization_id = ?
+                AND (? IS NULL OR e.field_name = ?)
+              ORDER BY e.created_at DESC""",
+            (str(organization_id), field_name, field_name),
+        )
+        hits = []
+        for row in rows:
+            values = {
+                "observed_value": row["observed_value"] or "",
+                "canonical_value": row["canonical_value"] or "",
+                "field_name": row["field_name"] or "",
+            }
+            identifier_matches = [
+                name for name, value in values.items() if normalized_query and normalized_query in normalize_identifier(value)
+            ]
+            text_matches = [
+                name for name, value in values.items() if text_query and text_query in normalize_text(value)
+            ]
+            matched_on = list(dict.fromkeys(identifier_matches + text_matches))
+            if not matched_on:
+                continue
+            score = 1.0 if "canonical_value" in matched_on else 0.9 if "observed_value" in matched_on else 0.7
+            hits.append(
+                {
+                    "evidence_record_id": row["record_id"],
+                    "document_id": row["document_id"],
+                    "file_name": row["file_name"],
+                    "document_type": row["document_type"],
+                    "field_name": row["field_name"],
+                    "observed_value": row["observed_value"],
+                    "canonical_value": row["canonical_value"],
+                    "corruption_type": row["corruption_type"],
+                    "source_locator": json.loads(row["source_locator_json"]),
+                    "citation": {
+                        "document_id": row["document_id"],
+                        "file_name": row["file_name"],
+                        "sha256": row["sha256"],
+                        "locator": json.loads(row["source_locator_json"]),
+                    },
+                    "matched_on": matched_on,
+                    "score": score,
+                }
+            )
+        hits.sort(key=lambda hit: (-hit["score"], hit["file_name"]))
+        return hits[:limit]
+
+    def search_events(self, organization_id: UUID, query: str, limit: int = 25) -> list[dict[str, object]]:
+        """Search event payloads without allowing cross-tenant reads."""
+        normalized_query = normalize_text(query)
+        rows = self.connection.execute(
+            """SELECT * FROM canonical_events
+               WHERE organization_id = ?
+               ORDER BY event_time DESC""",
+            (str(organization_id),),
+        )
+        hits = []
+        for row in rows:
+            searchable = normalize_text(
+                " ".join(
+                    [
+                        row["event_type"],
+                        row["source_system"],
+                        row["payload_json"],
+                        row["provenance_json"],
+                    ]
+                )
+            )
+            if normalized_query not in searchable:
+                continue
+            hits.append(
+                {
+                    "event_id": row["event_id"],
+                    "event_type": row["event_type"],
+                    "event_time": row["event_time"],
+                    "source_system": row["source_system"],
+                    "payload": json.loads(row["payload_json"]),
+                    "provenance": json.loads(row["provenance_json"]),
+                }
+            )
+        return hits[:limit]
 
     def upsert_graph_node(self, node: GraphNode) -> None:
         self.connection.execute(

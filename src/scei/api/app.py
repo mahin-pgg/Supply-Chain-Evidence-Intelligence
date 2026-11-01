@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Query, UploadFile
 
 from scei.documents.pipeline import DocumentIngestionPipeline
 from scei.documents.semantic import SemanticDocumentEnricher
@@ -16,6 +16,7 @@ from scei.ingestion.models import (
 )
 from scei.investigation.api_models import ContaminationInvestigationRequest, GenealogyQuery
 from scei.investigation.genealogy import GenealogyEngine
+from scei.retrieval.api_models import EventSearchResponse, EvidenceSearchResponse, bounded_limit
 from scei.storage.sqlite import SQLiteCanonicalStore
 
 
@@ -39,6 +40,31 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "scei-api"}
+
+    @app.get("/v1/search/evidence", response_model=EvidenceSearchResponse)
+    def search_evidence(
+        organization_id: UUID,
+        q: str = Query(min_length=1, max_length=256),
+        field_name: str | None = Query(default=None, max_length=128),
+        limit: int = Query(default=25, ge=1, le=100),
+    ) -> EvidenceSearchResponse:
+        results = canonical_store.search_evidence(
+            organization_id, q, field_name=field_name, limit=bounded_limit(limit)
+        )
+        return EvidenceSearchResponse(
+            organization_id=organization_id, query=q, total=len(results), results=results
+        )
+
+    @app.get("/v1/search/events", response_model=EventSearchResponse)
+    def search_events(
+        organization_id: UUID,
+        q: str = Query(min_length=1, max_length=256),
+        limit: int = Query(default=25, ge=1, le=100),
+    ) -> EventSearchResponse:
+        results = canonical_store.search_events(organization_id, q, limit=bounded_limit(limit))
+        return EventSearchResponse(
+            organization_id=organization_id, query=q, total=len(results), results=results
+        )
 
     @app.post("/v1/ingest/documents", response_model=IngestionReceipt, status_code=202)
     def ingest_document(document: SourceDocumentIngest) -> IngestionReceipt:
