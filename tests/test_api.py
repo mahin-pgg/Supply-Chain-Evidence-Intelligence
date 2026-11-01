@@ -1,6 +1,10 @@
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 
 from scei.api.app import create_app
+from scei.graph.models import GraphEdge, GraphNode
+from scei.resolution.models import ResolutionState
 from scei.storage.sqlite import SQLiteCanonicalStore
 
 
@@ -95,4 +99,69 @@ def test_evidence_search_normalizes_identifiers_and_is_tenant_scoped():
     assert body["total"] == 1
     assert body["results"][0]["citation"]["file_name"] == "release_certificate.txt"
     assert body["results"][0]["source_locator"] == {"paragraph": 2}
+    store.close()
+
+
+def test_batch_investigation_combines_evidence_and_graph_impact():
+    store = SQLiteCanonicalStore()
+    client = TestClient(create_app(store))
+    organization_id = uuid4()
+    batch_id, product_id, event_id = uuid4(), uuid4(), uuid4()
+    for node_id, node_type in [(batch_id, "batch"), (product_id, "product")]:
+        store.upsert_graph_node(
+            GraphNode(
+                organization_id=organization_id,
+                node_id=node_id,
+                node_type=node_type,
+                label="BATCH-BD-00999" if node_id == batch_id else "PRODUCT-00999",
+            )
+        )
+    store.add_graph_edge(
+        GraphEdge(
+            organization_id=organization_id,
+            edge_id=uuid4(),
+            source_node_id=batch_id,
+            target_node_id=product_id,
+            edge_type="PRODUCES",
+            event_id=event_id,
+            relationship_state=ResolutionState.VERIFIED,
+            provenance=[{"document_id": str(uuid4())}],
+        )
+    )
+    document_id = uuid4()
+    client.post(
+        "/v1/ingest/documents",
+        json={
+            "organization_id": str(organization_id),
+            "document_id": str(document_id),
+            "document_type": "certificate",
+            "file_name": "batch.pdf",
+            "mime_type": "application/pdf",
+            "source_channel": "test",
+            "received_at": "2026-01-01T00:00:00Z",
+            "sha256": "c" * 64,
+            "language": "en",
+        },
+    )
+    client.post(
+        "/v1/ingest/evidence",
+        json={
+            "organization_id": str(organization_id),
+            "record_id": str(uuid4()),
+            "document_id": str(document_id),
+            "field_name": "batch_identifier",
+            "observed_value": "batch bd 00999",
+            "canonical_value": "BATCH-BD-00999",
+            "source_locator": {"page": 1},
+        },
+    )
+    response = client.post(
+        "/v1/investigations/batch",
+        json={"organization_id": str(organization_id), "batch_query": "BATCH BD 00999"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["graph_node_id"] == str(batch_id)
+    assert body["evidence"][0]["citation"]["file_name"] == "batch.pdf"
+    assert body["contamination_impact"]["confirmed_products"][0]["product_id"] == str(product_id)
     store.close()

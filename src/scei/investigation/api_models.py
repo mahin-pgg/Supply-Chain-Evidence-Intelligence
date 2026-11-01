@@ -14,3 +14,9 @@ class GenealogyQuery(BaseModel):
     node_id: UUID
     direction: str = "downstream"
     max_hops: int = Field(default=20, ge=1, le=100)
+
+
+class BatchInvestigationRequest(BaseModel):
+    organization_id: UUID
+    batch_query: str = Field(min_length=1, max_length=256)
+    max_hops: int = Field(default=20, ge=1, le=100)

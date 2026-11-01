@@ -42,6 +42,10 @@ $env:SCEI_ENABLE_SEMANTIC = "1"
 
 The local default model is `qwen3:4b`. The semantic layer only persists claims that can be anchored to extracted source text; unsupported model output is discarded. Override the model with `OLLAMA_MODEL` when needed.
 
+## Batch investigation API
+
+Use `POST /v1/investigations/batch` with an organization ID and a batch identifier. The response combines normalized evidence citations with genealogy and contamination impact when the batch has been projected into the graph. Missing graph projections are reported in `gaps` rather than hidden.
+
 ## Synthetic development data
 
 The Bangladesh-oriented data generator is documented in [docs/data/README.md](docs/data/README.md). It produces deterministic, gzip-compressed JSONL with realistic supply-chain messiness and ground-truth incident impact. Generated data is intentionally ignored by Git.

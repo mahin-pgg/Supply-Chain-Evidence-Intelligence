@@ -14,7 +14,11 @@ from scei.ingestion.models import (
     IngestionReceipt,
     SourceDocumentIngest,
 )
-from scei.investigation.api_models import ContaminationInvestigationRequest, GenealogyQuery
+from scei.investigation.api_models import (
+    BatchInvestigationRequest,
+    ContaminationInvestigationRequest,
+    GenealogyQuery,
+)
 from scei.investigation.genealogy import GenealogyEngine
 from scei.retrieval.api_models import EventSearchResponse, EvidenceSearchResponse, bounded_limit
 from scei.storage.sqlite import SQLiteCanonicalStore
@@ -65,6 +69,46 @@ def create_app(
         return EventSearchResponse(
             organization_id=organization_id, query=q, total=len(results), results=results
         )
+
+    @app.post("/v1/investigations/batch")
+    def investigate_batch(request: BatchInvestigationRequest) -> dict[str, object]:
+        evidence = canonical_store.search_evidence(
+            request.organization_id,
+            request.batch_query,
+            field_name="batch_identifier",
+            limit=100,
+        )
+        identifiers = list(
+            dict.fromkeys(
+                str(hit["canonical_value"] or hit["observed_value"])
+                for hit in evidence
+                if hit["canonical_value"] or hit["observed_value"]
+            )
+        )
+        node_id = canonical_store.find_graph_node_by_label(request.organization_id, identifiers)
+        gaps: list[str] = []
+        genealogy = None
+        impact = None
+        if node_id is None:
+            gaps.append("no_graph_node_projection")
+        else:
+            engine = GenealogyEngine(canonical_store)
+            genealogy = engine.traverse(
+                request.organization_id, node_id, max_hops=request.max_hops
+            ).model_dump(mode="json")
+            impact = engine.analyze_contamination(
+                request.organization_id, node_id, max_hops=request.max_hops
+            ).model_dump(mode="json")
+        return {
+            "organization_id": request.organization_id,
+            "query": request.batch_query,
+            "resolved_identifiers": identifiers,
+            "evidence": evidence,
+            "graph_node_id": node_id,
+            "genealogy": genealogy,
+            "contamination_impact": impact,
+            "gaps": gaps,
+        }
 
     @app.post("/v1/ingest/documents", response_model=IngestionReceipt, status_code=202)
     def ingest_document(document: SourceDocumentIngest) -> IngestionReceipt:

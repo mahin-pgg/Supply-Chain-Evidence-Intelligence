@@ -399,6 +399,24 @@ class SQLiteCanonicalStore:
             )
         return hits[:limit]
 
+    def find_graph_node_by_label(
+        self, organization_id: UUID, labels: Iterable[str], node_type: str = "batch"
+    ) -> UUID | None:
+        """Resolve a graph node label within a tenant without cross-tenant leakage."""
+        candidates = [normalize_identifier(label) for label in labels if label]
+        if not candidates:
+            return None
+        rows = self.connection.execute(
+            """SELECT node_id, label FROM graph_nodes
+               WHERE organization_id = ? AND node_type = ?""",
+            (str(organization_id), node_type),
+        )
+        for row in rows:
+            normalized_label = normalize_identifier(row["label"])
+            if any(candidate == normalized_label for candidate in candidates):
+                return UUID(row["node_id"])
+        return None
+
     def upsert_graph_node(self, node: GraphNode) -> None:
         self.connection.execute(
             """INSERT INTO graph_nodes (organization_id, node_id, node_type, label, attributes_json)
