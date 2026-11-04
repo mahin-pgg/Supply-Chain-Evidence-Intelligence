@@ -228,6 +228,22 @@ def test_incident_report_combines_upstream_downstream_and_expected_batches():
     store.close()
 
 
+def test_resolution_decision_history_is_immutable_and_tenant_scoped():
+    store = SQLiteCanonicalStore()
+    client = TestClient(create_app(store))
+    tenant = uuid4()
+    review_id, event_id = uuid4(), uuid4()
+    store.add_resolution_review(tenant, review_id, event_id, "batch_code", "batch", "BATCH-X", [], "test")
+    response = client.post(f"/v1/reviews/resolution/{review_id}", params={"organization_id": str(tenant)}, json={"action": "reject", "reviewer_id": "reviewer-1"})
+    assert response.status_code == 200
+    history = client.get(f"/v1/reviews/resolution/{review_id}/history", params={"organization_id": str(tenant)})
+    assert history.status_code == 200
+    assert len(history.json()["decisions"]) == 1
+    other = client.get(f"/v1/reviews/resolution/{review_id}/history", params={"organization_id": str(uuid4())})
+    assert other.status_code == 404
+    store.close()
+
+
 def test_resolution_review_queue_is_tenant_scoped_and_decidable():
     store = SQLiteCanonicalStore()
     client = TestClient(create_app(store))

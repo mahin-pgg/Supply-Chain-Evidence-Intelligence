@@ -146,6 +146,23 @@ CREATE TABLE IF NOT EXISTS resolution_mappings (
 
 CREATE INDEX IF NOT EXISTS idx_mappings_lookup
     ON resolution_mappings (organization_id, observed_identifier, field_name, entity_type, version);
+
+CREATE TABLE IF NOT EXISTS resolution_review_decisions (
+    organization_id TEXT NOT NULL,
+    decision_id TEXT NOT NULL,
+    review_id TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    selected_entity_id TEXT,
+    reviewer_id TEXT NOT NULL,
+    decision_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (organization_id, decision_id),
+    UNIQUE (organization_id, review_id, decision_id),
+    FOREIGN KEY (organization_id, review_id) REFERENCES resolution_reviews(organization_id, review_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_review_decisions_lookup
+    ON resolution_review_decisions (organization_id, review_id, decision_at);
 """
 
 
@@ -660,6 +677,14 @@ class SQLiteCanonicalStore:
         reviewer_id: str,
         selected_entity_id: UUID | None = None,
     ) -> dict[str, object] | None:
+        from uuid import uuid4
+        self.connection.execute(
+            """INSERT INTO resolution_review_decisions
+               (organization_id, decision_id, review_id, decision, selected_entity_id, reviewer_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (str(organization_id), str(uuid4()), str(review_id), status,
+             str(selected_entity_id) if selected_entity_id else None, reviewer_id),
+        )
         cursor = self.connection.execute(
             """UPDATE resolution_reviews
                SET status = ?, selected_entity_id = ?, reviewer_id = ?,
@@ -681,6 +706,14 @@ class SQLiteCanonicalStore:
             (str(organization_id), str(review_id)),
         ).fetchone()
         return {**dict(row), "candidates": json.loads(row["candidates_json"])}
+
+    def list_review_decisions(self, organization_id: UUID, review_id: UUID) -> list[dict[str, object]]:
+        rows = self.connection.execute(
+            """SELECT * FROM resolution_review_decisions
+               WHERE organization_id=? AND review_id=? ORDER BY decision_at, decision_id""",
+            (str(organization_id), str(review_id)),
+        )
+        return [dict(row) for row in rows]
 
     def entity_belongs_to_tenant(self, organization_id: UUID, entity_id: UUID) -> bool:
         graph_match = (

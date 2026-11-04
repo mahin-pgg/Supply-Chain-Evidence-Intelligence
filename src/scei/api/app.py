@@ -140,6 +140,17 @@ def create_app(
         except ResolutionApplicationError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @app.get("/v1/reviews/resolution/{review_id}/history")
+    def resolution_review_history(review_id: UUID, organization_id: UUID) -> dict[str, object]:
+        review = canonical_store.get_resolution_review(organization_id, review_id)
+        if review is None:
+            raise HTTPException(status_code=404, detail="review not found")
+        return {
+            "organization_id": organization_id,
+            "review_id": review_id,
+            "decisions": canonical_store.list_review_decisions(organization_id, review_id),
+        }
+
     @app.post("/v1/investigations/batch")
     def investigate_batch(request: BatchInvestigationRequest) -> dict[str, object]:
         evidence = canonical_store.search_evidence(
