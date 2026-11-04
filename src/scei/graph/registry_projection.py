@@ -167,10 +167,10 @@ class RegistryGraphProjectionService:
             with self.graph.batch_write():
                 for event in events:
                     bindings = {}
-                    for field in ("batch_code", "source_batch_code", "destination_batch_code", "input_batch_code", "product_code"):
+                    for field in ("batch_code", "source_batch_code", "destination_batch_code", "input_batch_code", "product_code", "facility_code", "material_code"):
                         value = event.payload.get(field)
                         if value:
-                            entity_type = "product" if field == "product_code" else "batch"
+                            entity_type = "product" if field == "product_code" else "facility" if field == "facility_code" else "material" if field == "material_code" else "batch"
                             bindings[str(value)] = resolver.resolve(event.organization_id, entity_type, str(value), allow_fuzzy=False)
                     result = projector.project_event(
                         event, bindings, context_id, dataset_version_id, run_id

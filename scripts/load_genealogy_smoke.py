@@ -28,6 +28,8 @@ def enrich_and_project(dataset: Path, database: Path) -> dict[str, object]:
     base = load(dataset, database)
     version_id = UUID(str(base["dataset_version_id"]))
     organizations = list(rows(dataset / "organizations.jsonl.gz"))
+    facilities = list(rows(dataset / "facilities.jsonl.gz"))
+    facility_codes = {index: facility[1]["facility_code"] for index, facility in enumerate(facilities)}
     batch_organizations = {
         batch["batch_code"]: UUID(organizations[batch["organization_index"]][1]["organization_id"])
         for _, batch in rows(dataset / "batches.jsonl.gz")
@@ -85,6 +87,8 @@ def enrich_and_project(dataset: Path, database: Path) -> dict[str, object]:
         payload.pop("event_time", None)
         payload.pop("source_system", None)
         payload.pop("synthetic", None)
+        if "facility_index" in payload:
+            payload["facility_code"] = facility_codes[payload.pop("facility_index")]
         store_events += graph.add_event(EventIngestEnvelope(
             organization_id=organization_id, event_id=UUID(event["event_id"]),
             event_type=event["event_type"], event_time=datetime.fromisoformat(event["event_time"]),

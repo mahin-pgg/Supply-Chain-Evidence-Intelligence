@@ -39,6 +39,7 @@ class GenealogyProjector:
             )
             source = bindings.get(str(payload.get("source_batch_code")))
             target = bindings.get(str(payload.get("destination_batch_code")))
+            facility = bindings.get(str(payload.get("facility_code")))
             if (
                 source
                 and target
@@ -53,6 +54,8 @@ class GenealogyProjector:
                     ]
                 )
                 edges.append(self._edge(event, source, target, "TRANSFORMS_INTO"))
+                if facility and facility.selected_entity_id:
+                    edges.append(self._edge(event, target, facility, "TRANSFORMED_AT"))
         elif event.event_type == "PRODUCE":
             self._require_binding(
                 bindings, payload.get("input_batch_code"), "input_batch_code", gaps
@@ -60,6 +63,7 @@ class GenealogyProjector:
             self._require_binding(bindings, payload.get("product_code"), "product_code", gaps)
             source = bindings.get(str(payload.get("input_batch_code")))
             target = bindings.get(str(payload.get("product_code")))
+            facility = bindings.get(str(payload.get("facility_code")))
             if (
                 source
                 and target
@@ -74,11 +78,17 @@ class GenealogyProjector:
                     ]
                 )
                 edges.append(self._edge(event, source, target, "PRODUCES"))
+                if facility and facility.selected_entity_id:
+                    edges.append(self._edge(event, target, facility, "PRODUCED_AT"))
         elif event.event_type in {"RECEIVE", "STORE", "SHIP", "QUARANTINE"}:
             self._require_binding(bindings, payload.get("batch_code"), "batch_code", gaps)
             batch = bindings.get(str(payload.get("batch_code")))
+            facility = bindings.get(str(payload.get("facility_code")))
             if batch and batch.selected_entity_id:
                 nodes.append(self._node(event, batch, "batch", str(payload["batch_code"])))
+                if facility and facility.selected_entity_id:
+                    nodes.append(self._node(event, facility, "facility", str(payload["facility_code"])))
+                    edges.append(self._edge(event, batch, facility, f"{event.event_type}_AT"))
         else:
             gaps.append(f"event_type_not_supported:{event.event_type}")
         for node in nodes:
