@@ -203,6 +203,31 @@ def test_incident_investigation_resolves_tenant_scoped_contaminated_batch():
     store.close()
 
 
+def test_incident_report_combines_upstream_downstream_and_expected_batches():
+    store = SQLiteCanonicalStore()
+    client = TestClient(create_app(store))
+    tenant = uuid4()
+    raw, contaminated, downstream = uuid4(), uuid4(), uuid4()
+    context = uuid4()
+    for node_id, label in [(raw, "BATCH-RAW"), (contaminated, "BATCH-CONTAMINATED"), (downstream, "BATCH-AFFECTED")]:
+        store.upsert_graph_node(GraphNode(organization_id=tenant, node_id=node_id, node_type="batch", label=label, attributes={}), context_id=context)
+    for source, target in [(raw, contaminated), (contaminated, downstream)]:
+        store.add_graph_edge(GraphEdge(
+            organization_id=tenant, edge_id=uuid4(), source_node_id=source, target_node_id=target,
+            edge_type="TRANSFORMS_INTO", event_id=uuid4(), relationship_state=ResolutionState.VERIFIED,
+            provenance=[{"document_id": str(uuid4())}],
+        ), context_id=context)
+    store.add_contamination_incident(tenant, "INC-REPORT", "high", "BATCH-CONTAMINATED", ["BATCH-AFFECTED"], "test", True)
+    response = client.get("/v1/investigations/incident/INC-REPORT/report", params={"organization_id": str(tenant), "context_id": str(context)})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["upstream"]["paths"]
+    assert body["downstream"]["paths"]
+    assert body["observed_projected_expected_batches"] == ["BATCH-AFFECTED"]
+    assert body["missing_expected_batches"] == []
+    store.close()
+
+
 def test_resolution_review_queue_is_tenant_scoped_and_decidable():
     store = SQLiteCanonicalStore()
     client = TestClient(create_app(store))
