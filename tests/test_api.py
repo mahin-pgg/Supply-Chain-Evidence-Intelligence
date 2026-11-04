@@ -260,6 +260,14 @@ def test_dataset_context_api_is_tenant_scoped():
     store.close()
 
 
+def test_investigation_console_is_available():
+    store = SQLiteCanonicalStore()
+    response = TestClient(create_app(store)).get("/ui")
+    assert response.status_code == 200
+    assert "SCEI Investigation Console" in response.text
+    store.close()
+
+
 def test_resolution_review_queue_is_tenant_scoped_and_decidable():
     store = SQLiteCanonicalStore()
     client = TestClient(create_app(store))

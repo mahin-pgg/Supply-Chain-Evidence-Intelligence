@@ -6,8 +6,10 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from scei.api.ui import UI_HTML
 from scei.documents.pipeline import DocumentIngestionPipeline
 from scei.documents.semantic import SemanticDocumentEnricher
 from scei.graph.application_service import ResolutionApplicationError, ResolutionApplicationService
@@ -51,6 +53,10 @@ def create_app(
         semantic_enricher = SemanticDocumentEnricher()
     app = FastAPI(title="Supply Chain Evidence Intelligence", version="0.1.0")
     app.state.canonical_store = canonical_store
+
+    @app.get("/ui", response_class=HTMLResponse, include_in_schema=False)
+    def investigation_console() -> str:
+        return UI_HTML
 
     @app.get("/health")
     def health() -> dict[str, str]:
