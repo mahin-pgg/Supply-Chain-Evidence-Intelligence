@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from scei.datasets.models import ValidationReport
 from scei.datasets.schema import SCHEMA
@@ -155,6 +156,64 @@ class SQLiteDatasetRepository:
             "SELECT * FROM investigation_contexts WHERE context_id=?", (str(context_id),)
         ).fetchone()
         return dict(row) if row else None
+
+    def get_active_load(self, context_id: UUID) -> dict[str, object] | None:
+        row = self.connection.execute(
+            "SELECT * FROM load_runs WHERE context_id=? AND status='active' ORDER BY completed_at DESC LIMIT 1",
+            (str(context_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def start_projection_run(
+        self, context_id: UUID, projection_version: str, configuration_checksum: str,
+    ) -> dict[str, object]:
+        context = self.get_context(context_id)
+        load = self.get_active_load(context_id)
+        if context is None or context["status"] != "active":
+            raise ValueError("active_context_required")
+        if load is None:
+            raise ValueError("active_load_required")
+        projection_run_id = uuid5(
+            NAMESPACE_URL, f"scei:projection:{context_id}:{projection_version}:{configuration_checksum}"
+        )
+        self.connection.execute(
+            """INSERT OR IGNORE INTO projection_runs
+               (projection_run_id, context_id, dataset_version_id, load_run_id,
+                projection_version, configuration_checksum, status)
+               VALUES (?, ?, ?, ?, ?, ?, 'running')""",
+            (str(projection_run_id), str(context_id), context["dataset_version_id"],
+             load["load_run_id"], projection_version, configuration_checksum),
+        )
+        self.connection.commit()
+        row = self.connection.execute(
+            "SELECT * FROM projection_runs WHERE projection_run_id=?", (str(projection_run_id),)
+        ).fetchone()
+        return dict(row)
+
+    def complete_projection_run(
+        self, projection_run_id: UUID, node_count: int, edge_count: int,
+        validation_report: dict[str, object],
+    ) -> dict[str, object]:
+        self.connection.execute(
+            """UPDATE projection_runs SET status='completed', node_count=?, edge_count=?,
+               validation_report_json=?, completed_at=CURRENT_TIMESTAMP
+               WHERE projection_run_id=? AND status='running'""",
+            (node_count, edge_count, json.dumps(validation_report, separators=(",", ":")),
+             str(projection_run_id)),
+        )
+        self.connection.commit()
+        row = self.connection.execute(
+            "SELECT * FROM projection_runs WHERE projection_run_id=?", (str(projection_run_id),)
+        ).fetchone()
+        return dict(row)
+
+    def fail_projection_run(self, projection_run_id: UUID, error: str) -> None:
+        self.connection.execute(
+            """UPDATE projection_runs SET status='failed', validation_report_json=?
+               WHERE projection_run_id=? AND status='running'""",
+            (json.dumps({"errors": [error[:2000]]}), str(projection_run_id)),
+        )
+        self.connection.commit()
 
     def count(self, table: str) -> int:
         allowed = {

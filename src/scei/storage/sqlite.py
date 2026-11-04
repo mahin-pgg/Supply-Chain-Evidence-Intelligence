@@ -151,6 +151,7 @@ class SQLiteCanonicalStore:
         self.application_lock = threading.Lock()
         self.connection.executescript(SCHEMA)
         self._ensure_review_columns()
+        self._ensure_graph_columns()
 
     def close(self) -> None:
         self.connection.close()
@@ -166,6 +167,21 @@ class SQLiteCanonicalStore:
         }.items():
             if name not in columns:
                 self.connection.execute(f"ALTER TABLE resolution_reviews ADD COLUMN {name} {definition}")
+        self.connection.commit()
+
+    def _ensure_graph_columns(self) -> None:
+        columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(graph_nodes)")
+        }
+        for name in ("context_id", "dataset_version_id", "projection_run_id"):
+            if name not in columns:
+                self.connection.execute(f"ALTER TABLE graph_nodes ADD COLUMN {name} TEXT")
+        columns = {
+            row["name"] for row in self.connection.execute("PRAGMA table_info(graph_edges)")
+        }
+        for name in ("context_id", "dataset_version_id", "projection_run_id"):
+            if name not in columns:
+                self.connection.execute(f"ALTER TABLE graph_edges ADD COLUMN {name} TEXT")
         self.connection.commit()
 
     @contextmanager
@@ -728,27 +744,50 @@ class SQLiteCanonicalStore:
         )
         self.connection.commit()
 
-    def upsert_graph_node(self, node: GraphNode) -> None:
+    def upsert_graph_node(
+        self,
+        node: GraphNode,
+        context_id: UUID | None = None,
+        dataset_version_id: UUID | None = None,
+        projection_run_id: UUID | None = None,
+    ) -> None:
         self.connection.execute(
-            """INSERT INTO graph_nodes (organization_id, node_id, node_type, label, attributes_json)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (organization_id, node_id) DO UPDATE SET label=excluded.label, attributes_json=excluded.attributes_json""",
+            """INSERT INTO graph_nodes
+            (organization_id, node_id, node_type, label, attributes_json,
+             context_id, dataset_version_id, projection_run_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (organization_id, node_id) DO UPDATE SET
+                label=excluded.label, attributes_json=excluded.attributes_json,
+                context_id=COALESCE(excluded.context_id, graph_nodes.context_id),
+                dataset_version_id=COALESCE(excluded.dataset_version_id, graph_nodes.dataset_version_id),
+                projection_run_id=COALESCE(excluded.projection_run_id, graph_nodes.projection_run_id)""",
             (
                 str(node.organization_id),
                 str(node.node_id),
                 node.node_type,
                 node.label,
                 _json(node.attributes),
+                str(context_id) if context_id else None,
+                str(dataset_version_id) if dataset_version_id else None,
+                str(projection_run_id) if projection_run_id else None,
             ),
         )
         if not self._defer_commits:
             self.connection.commit()
 
-    def add_graph_edge(self, edge: GraphEdge) -> bool:
+    def add_graph_edge(
+        self,
+        edge: GraphEdge,
+        context_id: UUID | None = None,
+        dataset_version_id: UUID | None = None,
+        projection_run_id: UUID | None = None,
+    ) -> bool:
         cursor = self.connection.execute(
             """INSERT OR IGNORE INTO graph_edges
-            (organization_id, edge_id, source_node_id, target_node_id, edge_type, event_id, relationship_state, quantity_json, provenance_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (organization_id, edge_id, source_node_id, target_node_id, edge_type, event_id,
+             relationship_state, quantity_json, provenance_json, context_id,
+             dataset_version_id, projection_run_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 str(edge.organization_id),
                 str(edge.edge_id),
@@ -759,6 +798,9 @@ class SQLiteCanonicalStore:
                 edge.relationship_state.value,
                 _json(edge.quantity) if edge.quantity else None,
                 _json(edge.provenance),
+                str(context_id) if context_id else None,
+                str(dataset_version_id) if dataset_version_id else None,
+                str(projection_run_id) if projection_run_id else None,
             ),
         )
         if not self._defer_commits:

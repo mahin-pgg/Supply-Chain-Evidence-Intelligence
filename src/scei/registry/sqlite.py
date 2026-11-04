@@ -180,6 +180,22 @@ class SQLiteRegistryRepository:
             attributes=json.loads(row["attributes_json"]),
         )
 
+    def list_entities_for_dataset(
+        self, organization_id: UUID, dataset_version_id: UUID,
+        entity_type: str | None = None,
+    ) -> list[CanonicalEntity]:
+        query = """SELECT e.* FROM canonical_entities e
+                   JOIN entity_dataset_memberships m
+                     ON m.organization_id = e.organization_id AND m.entity_id = e.entity_id
+                  WHERE e.organization_id = ? AND m.dataset_version_id = ?
+                    AND m.membership_status = 'active' AND e.status = 'active'"""
+        params: list[object] = [str(organization_id), str(dataset_version_id)]
+        if entity_type:
+            query += " AND e.entity_type = ?"
+            params.append(entity_type)
+        query += " ORDER BY e.entity_id"
+        return [self.get_entity(organization_id, UUID(row["entity_id"])) for row in self.connection.execute(query, params)]
+
     def find_candidates(
         self, organization_id: UUID, entity_type: str, normalized_value: str,
         identifier_type: str | None = None, namespace: str | None = None,

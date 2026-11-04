@@ -6,15 +6,18 @@ import pytest
 
 from scei.datasets.models import ValidationReport
 from scei.datasets.sqlite import SQLiteDatasetRepository
+from scei.graph.registry_projection import RegistryGraphProjectionService
 from scei.registry.models import (
     CanonicalEntity,
     EntityAlias,
+    EntityDatasetMembership,
     EntityIdentifier,
     RegistryEntityType,
     RegistryProvenance,
 )
 from scei.registry.sqlite import SQLiteRegistryRepository
 from scei.resolution.normalization import normalize_identifier, normalize_name
+from scei.storage.sqlite import SQLiteCanonicalStore
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 OTHER_TENANT = UUID("00000000-0000-0000-0000-000000000002")
@@ -83,6 +86,46 @@ def test_registry_candidates_work_without_graph_nodes(tmp_path):
     alias = registry.find_candidates(TENANT, "batch", normalize_name("LOT-BATCH-001"))
     assert [candidate.entity.entity_id for candidate in exact] == [entity_id]
     assert alias[0].matched_alias is not None
+    dataset.close()
+    registry.close()
+
+
+def test_registry_batch_projection_is_contextual_and_idempotent(tmp_path):
+    dataset, registry = setup_registry(tmp_path)
+    entity_id = uuid4()
+    provenance_id = add_batch(registry, entity_id, code="BATCH-PROJECT-001")
+    registry.add_membership(
+        EntityDatasetMembership(
+            membership_id=uuid4(), organization_id=TENANT, entity_id=entity_id,
+            dataset_version_id=VERSION, source_entity_key=str(entity_id), source_table="batches",
+            provenance_id=provenance_id,
+        )
+    )
+    context_id = uuid4()
+    dataset.create_context(context_id, TENANT, WORKSPACE, VERSION)
+    load_run = dataset.begin_load(VERSION, context_id)
+    dataset.mark_load_validated(load_run, ValidationReport(valid=True, counts={"batches": 1}))
+    dataset.activate_context(context_id)
+    graph = SQLiteCanonicalStore(tmp_path / "registry.db")
+    service = RegistryGraphProjectionService(dataset, registry, graph)
+
+    first = service.project_batches(context_id)
+    second = service.project_batches(context_id)
+    nodes = graph.list_graph_nodes(TENANT, node_type="batch")
+    projection = dataset.connection.execute("SELECT * FROM projection_runs").fetchall()
+
+    assert first.entities_seen == 1
+    assert first.replayed is False
+    assert second.replayed is True
+    assert first.projection_run_id == second.projection_run_id
+    assert len(nodes) == 1
+    assert nodes[0]["node_id"] == str(entity_id)
+    assert nodes[0]["context_id"] == str(context_id)
+    assert nodes[0]["dataset_version_id"] == str(VERSION)
+    assert nodes[0]["projection_run_id"] == str(first.projection_run_id)
+    assert len(projection) == 1
+    assert projection[0]["status"] == "completed"
+    graph.close()
     dataset.close()
     registry.close()
 
