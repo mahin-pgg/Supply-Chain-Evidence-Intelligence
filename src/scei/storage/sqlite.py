@@ -65,6 +65,18 @@ CREATE TABLE IF NOT EXISTS canonical_events (
 CREATE INDEX IF NOT EXISTS idx_events_tenant_time ON canonical_events (organization_id, event_time);
 CREATE INDEX IF NOT EXISTS idx_evidence_tenant_document ON evidence_records (organization_id, document_id);
 
+CREATE TABLE IF NOT EXISTS contamination_incidents (
+    organization_id TEXT NOT NULL,
+    incident_id TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    contaminated_batch_code TEXT NOT NULL,
+    expected_affected_batch_codes_json TEXT NOT NULL,
+    scenario TEXT NOT NULL,
+    review_required INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (organization_id, incident_id)
+);
+
 CREATE TABLE IF NOT EXISTS graph_nodes (
     organization_id TEXT NOT NULL,
     node_id TEXT NOT NULL,
@@ -266,6 +278,39 @@ class SQLiteCanonicalStore:
         self.connection.commit()
         return cursor.rowcount == 1
 
+    def add_contamination_incident(
+        self, organization_id: UUID, incident_id: str, severity: str,
+        contaminated_batch_code: str, expected_affected_batch_codes: list[str],
+        scenario: str, review_required: bool,
+    ) -> bool:
+        cursor = self.connection.execute(
+            """INSERT OR IGNORE INTO contamination_incidents
+               (organization_id, incident_id, severity, contaminated_batch_code,
+                expected_affected_batch_codes_json, scenario, review_required)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (str(organization_id), incident_id, severity, contaminated_batch_code,
+             _json(expected_affected_batch_codes), scenario, int(review_required)),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def get_contamination_incident(
+        self, organization_id: UUID, incident_id: str
+    ) -> dict[str, object] | None:
+        row = self.connection.execute(
+            """SELECT * FROM contamination_incidents
+               WHERE organization_id=? AND incident_id=?""",
+            (str(organization_id), incident_id),
+        ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["expected_affected_batch_codes"] = json.loads(
+            result.pop("expected_affected_batch_codes_json")
+        )
+        result["review_required"] = bool(result["review_required"])
+        return result
+
     def add_documents(
         self, documents: Iterable[SourceDocumentIngest], batch_size: int = 1000
     ) -> int:
@@ -379,7 +424,7 @@ class SQLiteCanonicalStore:
         return self.connection.total_changes - before
 
     def count(self, table: str, organization_id: UUID | None = None) -> int:
-        if table not in {"source_documents", "evidence_records", "canonical_events"}:
+        if table not in {"source_documents", "evidence_records", "canonical_events", "contamination_incidents"}:
             raise ValueError("unsupported table")
         if organization_id is None:
             return int(self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
@@ -521,16 +566,19 @@ class SQLiteCanonicalStore:
         return hits[:limit]
 
     def find_graph_node_by_label(
-        self, organization_id: UUID, labels: Iterable[str], node_type: str = "batch"
+        self, organization_id: UUID, labels: Iterable[str], node_type: str = "batch",
+        context_id: UUID | None = None,
     ) -> UUID | None:
         """Resolve a graph node label within a tenant without cross-tenant leakage."""
         candidates = [normalize_identifier(label) for label in labels if label]
         if not candidates:
             return None
+        context_clause = " AND context_id = ?" if context_id else ""
         rows = self.connection.execute(
-            """SELECT node_id, label FROM graph_nodes
-               WHERE organization_id = ? AND node_type = ?""",
-            (str(organization_id), node_type),
+            f"""SELECT node_id, label FROM graph_nodes
+               WHERE organization_id = ? AND node_type = ?{context_clause}""",
+            (str(organization_id), node_type)
+            + ((str(context_id),) if context_id else ()),
         )
         for row in rows:
             normalized_label = normalize_identifier(row["label"])

@@ -167,6 +167,42 @@ def test_batch_investigation_combines_evidence_and_graph_impact():
     store.close()
 
 
+def test_incident_investigation_resolves_tenant_scoped_contaminated_batch():
+    store = SQLiteCanonicalStore()
+    client = TestClient(create_app(store))
+    organization_id = uuid4()
+    batch_id, product_id = uuid4(), uuid4()
+    store.upsert_graph_node(GraphNode(
+        organization_id=organization_id, node_id=batch_id, node_type="batch", label="BATCH-BD-00028"
+    ))
+    store.upsert_graph_node(GraphNode(
+        organization_id=organization_id, node_id=product_id, node_type="product", label="PRODUCT-1"
+    ))
+    event_id = uuid4()
+    store.add_graph_edge(GraphEdge(
+        organization_id=organization_id, edge_id=uuid4(), source_node_id=batch_id,
+        target_node_id=product_id, edge_type="PRODUCES", event_id=event_id,
+        relationship_state=ResolutionState.VERIFIED, provenance=[{"document_id": str(uuid4())}],
+    ))
+    store.add_contamination_incident(
+        organization_id, "INC-BD-1", "high", "BATCH-BD-00028", ["BATCH-BD-00029"],
+        "potential_api_contamination", True,
+    )
+    response = client.post("/v1/investigations/incident", json={
+        "organization_id": str(organization_id), "incident_id": "INC-BD-1",
+    })
+    assert response.status_code == 200
+    body = response.json()
+    assert body["incident"]["incident_id"] == "INC-BD-1"
+    assert body["graph_node_id"] == str(batch_id)
+    assert body["contamination_impact"]["confirmed_products"][0]["product_id"] == str(product_id)
+    other = client.post("/v1/investigations/incident", json={
+        "organization_id": str(uuid4()), "incident_id": "INC-BD-1",
+    })
+    assert other.status_code == 404
+    store.close()
+
+
 def test_resolution_review_queue_is_tenant_scoped_and_decidable():
     store = SQLiteCanonicalStore()
     client = TestClient(create_app(store))

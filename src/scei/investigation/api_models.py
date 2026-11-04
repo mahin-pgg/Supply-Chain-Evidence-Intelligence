@@ -11,6 +11,14 @@ class ContaminationInvestigationRequest(BaseModel):
     include_possible: bool = False
 
 
+class IncidentInvestigationRequest(BaseModel):
+    organization_id: UUID
+    incident_id: str = Field(min_length=1, max_length=128)
+    context_id: UUID | None = None
+    max_hops: int = Field(default=20, ge=1, le=100)
+    include_possible: bool = False
+
+
 class GenealogyQuery(BaseModel):
     organization_id: UUID
     node_id: UUID

@@ -21,6 +21,7 @@ from scei.investigation.api_models import (
     BatchInvestigationRequest,
     ContaminationInvestigationRequest,
     GenealogyQuery,
+    IncidentInvestigationRequest,
 )
 from scei.investigation.genealogy import GenealogyEngine
 from scei.retrieval.api_models import EventSearchResponse, EvidenceSearchResponse, bounded_limit
@@ -257,6 +258,29 @@ def create_app(
             request.organization_id, request.contaminated_node_id, max_hops=request.max_hops,
             include_possible=request.include_possible, context_id=request.context_id,
         )
+
+    @app.post("/v1/investigations/incident")
+    def investigate_incident(request: IncidentInvestigationRequest) -> dict[str, object]:
+        incident = canonical_store.get_contamination_incident(
+            request.organization_id, request.incident_id
+        )
+        if incident is None:
+            raise HTTPException(status_code=404, detail="contamination incident not found")
+        node_id = canonical_store.find_graph_node_by_label(
+            request.organization_id, [str(incident["contaminated_batch_code"])], context_id=request.context_id
+        )
+        if node_id is None:
+            raise HTTPException(status_code=409, detail="contaminated batch is not projected in context")
+        engine = GenealogyEngine(canonical_store)
+        genealogy = engine.traverse(
+            request.organization_id, node_id, direction="downstream", max_hops=request.max_hops,
+            include_possible=request.include_possible, context_id=request.context_id,
+        )
+        impact = engine.analyze_contamination(
+            request.organization_id, node_id, max_hops=request.max_hops,
+            include_possible=request.include_possible, context_id=request.context_id,
+        )
+        return {"incident": incident, "graph_node_id": node_id, "genealogy": genealogy, "contamination_impact": impact}
 
     @app.post("/v1/genealogy/traverse")
     def traverse_genealogy(request: GenealogyQuery):

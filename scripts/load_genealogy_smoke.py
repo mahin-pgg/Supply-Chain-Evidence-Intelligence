@@ -79,6 +79,14 @@ def enrich_and_project(dataset: Path, database: Path) -> dict[str, object]:
             idempotency_key=event["event_id"], source_system=event["source_system"],
             payload=payload, provenance=[event["provenance"]],
         ))
+    incident_count = 0
+    for _, incident in rows(dataset / "incidents.jsonl.gz"):
+        organization_id = UUID(organizations[incident["tenant_index"]][1]["organization_id"])
+        incident_count += graph.add_contamination_incident(
+            organization_id, incident["incident_id"], incident["severity"],
+            incident["contaminated_batch_code"], incident["expected_affected_batch_codes"],
+            incident["scenario"], incident["expected_review_required"],
+        )
     contexts = datasets.connection.execute(
         "SELECT context_id, organization_id FROM investigation_contexts WHERE status='active'"
     ).fetchall()
@@ -90,7 +98,7 @@ def enrich_and_project(dataset: Path, database: Path) -> dict[str, object]:
         replay = RegistryGraphProjectionService(datasets, registry, graph).project_events(context_id, events)
         runs.append({"context_id": str(context_id), "events": len(events), "edges": summary.edges_upserted, "replayed": replay.replayed})
     result = {
-        **base, "products": product_count, "events": store_events,
+        **base, "products": product_count, "events": store_events, "incidents": incident_count,
         "graph_nodes": graph.connection.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0],
         "graph_edges": graph.connection.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0],
         "projection_runs": datasets.connection.execute("SELECT COUNT(*) FROM projection_runs").fetchone()[0],
