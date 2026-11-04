@@ -23,7 +23,8 @@ class GenealogyProjector:
         self.store = store
 
     def project_event(
-        self, event: EventIngestEnvelope, bindings: dict[str, ResolutionDecision]
+        self, event: EventIngestEnvelope, bindings: dict[str, ResolutionDecision],
+        context_id=None, dataset_version_id=None, projection_run_id=None,
     ) -> ProjectionResult:
         nodes: list[GraphNode] = []
         edges: list[GraphEdge] = []
@@ -81,9 +82,9 @@ class GenealogyProjector:
         else:
             gaps.append(f"event_type_not_supported:{event.event_type}")
         for node in nodes:
-            self.store.upsert_graph_node(node)
+            self.store.upsert_graph_node(node, context_id, dataset_version_id, projection_run_id)
         for edge in edges:
-            self.store.add_graph_edge(edge)
+            self.store.add_graph_edge(edge, context_id, dataset_version_id, projection_run_id)
         return ProjectionResult(
             event_id=event.event_id, nodes_written=len(nodes), edges_written=len(edges), gaps=gaps
         )

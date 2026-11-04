@@ -7,7 +7,10 @@ from uuid import UUID
 
 from scei.datasets.sqlite import SQLiteDatasetRepository
 from scei.graph.models import GraphNode
+from scei.graph.projector import GenealogyProjector
+from scei.ingestion.models import EventIngestEnvelope
 from scei.registry.sqlite import SQLiteRegistryRepository
+from scei.resolution.resolver import EntityResolver
 from scei.storage.sqlite import SQLiteCanonicalStore
 
 
@@ -19,6 +22,7 @@ class RegistryProjectionSummary:
     entities_seen: int
     nodes_upserted: int
     replayed: bool
+    edges_upserted: int = 0
 
 
 class RegistryGraphProjectionService:
@@ -102,4 +106,57 @@ class RegistryGraphProjectionService:
             entities_seen=len(entities),
             nodes_upserted=len(entities),
             replayed=False,
+        )
+
+    def project_events(
+        self, context_id: UUID, events: list[EventIngestEnvelope],
+        projection_version: str = "registry-genealogy-v1",
+    ) -> RegistryProjectionSummary:
+        configuration = {"entity_types": ["batch", "product"], "source": "registry-events"}
+        checksum = hashlib.sha256(
+            json.dumps(configuration, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        run = self.datasets.start_projection_run(context_id, projection_version, checksum)
+        context = self.datasets.get_context(context_id)
+        assert context is not None
+        dataset_version_id = UUID(str(context["dataset_version_id"]))
+        run_id = UUID(str(run["projection_run_id"]))
+        if run["status"] == "completed":
+            return RegistryProjectionSummary(
+                projection_run_id=run_id, context_id=context_id,
+                dataset_version_id=dataset_version_id,
+                entities_seen=int(run["node_count"]), nodes_upserted=0,
+                replayed=True, edges_upserted=int(run["edge_count"]),
+            )
+        profiles = self.registry.list_resolution_profiles(
+            UUID(str(context["organization_id"])), dataset_version_id
+        )
+        resolver = EntityResolver(profiles)
+        projector = GenealogyProjector(self.graph)
+        nodes = edges = 0
+        try:
+            with self.graph.batch_write():
+                for event in events:
+                    bindings = {}
+                    for field in ("batch_code", "source_batch_code", "destination_batch_code", "input_batch_code", "product_code"):
+                        value = event.payload.get(field)
+                        if value:
+                            entity_type = "product" if field == "product_code" else "batch"
+                            bindings[str(value)] = resolver.resolve(event.organization_id, entity_type, str(value), allow_fuzzy=False)
+                    result = projector.project_event(
+                        event, bindings, context_id, dataset_version_id, run_id
+                    )
+                    nodes += result.nodes_written
+                    edges += result.edges_written
+            self.datasets.complete_projection_run(
+                run_id, nodes, edges,
+                {"valid": True, "events_seen": len(events), "gaps": []},
+            )
+        except Exception as exc:
+            self.datasets.fail_projection_run(run_id, str(exc))
+            raise
+        return RegistryProjectionSummary(
+            projection_run_id=run_id, context_id=context_id,
+            dataset_version_id=dataset_version_id, entities_seen=len(events),
+            nodes_upserted=nodes, replayed=False, edges_upserted=edges,
         )

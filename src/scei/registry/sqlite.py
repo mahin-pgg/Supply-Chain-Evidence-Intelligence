@@ -17,6 +17,7 @@ from scei.registry.models import (
     IdentityConflict,
     RegistryProvenance,
 )
+from scei.resolution.models import EntityProfile
 
 
 def _json(value: object) -> str:
@@ -195,6 +196,32 @@ class SQLiteRegistryRepository:
             params.append(entity_type)
         query += " ORDER BY e.entity_id"
         return [self.get_entity(organization_id, UUID(row["entity_id"])) for row in self.connection.execute(query, params)]
+
+    def list_resolution_profiles(
+        self, organization_id: UUID, dataset_version_id: UUID,
+    ) -> list[EntityProfile]:
+        entities = self.list_entities_for_dataset(organization_id, dataset_version_id)
+        profiles = []
+        for entity in entities:
+            identifiers = [
+                row["raw_value"]
+                for row in self.connection.execute(
+                    """SELECT raw_value FROM entity_identifiers
+                       WHERE organization_id=? AND entity_id=? AND status='active'""",
+                    (str(organization_id), str(entity.entity_id)),
+                )
+            ]
+            profiles.append(
+                EntityProfile(
+                    entity_id=entity.entity_id,
+                    organization_id=entity.organization_id,
+                    entity_type=entity.entity_type.value,
+                    canonical_name=entity.canonical_name,
+                    identifiers=identifiers,
+                    attributes={k: str(v) for k, v in entity.attributes.items()},
+                )
+            )
+        return profiles
 
     def find_candidates(
         self, organization_id: UUID, entity_type: str, normalized_value: str,
