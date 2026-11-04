@@ -28,6 +28,10 @@ def enrich_and_project(dataset: Path, database: Path) -> dict[str, object]:
     base = load(dataset, database)
     version_id = UUID(str(base["dataset_version_id"]))
     organizations = list(rows(dataset / "organizations.jsonl.gz"))
+    batch_organizations = {
+        batch["batch_code"]: UUID(organizations[batch["organization_index"]][1]["organization_id"])
+        for _, batch in rows(dataset / "batches.jsonl.gz")
+    }
     products = list(rows(dataset / "products.jsonl.gz"))
     datasets = SQLiteDatasetRepository(database)
     registry = SQLiteRegistryRepository(database)
@@ -81,7 +85,7 @@ def enrich_and_project(dataset: Path, database: Path) -> dict[str, object]:
         ))
     incident_count = 0
     for _, incident in rows(dataset / "incidents.jsonl.gz"):
-        organization_id = UUID(organizations[incident["tenant_index"]][1]["organization_id"])
+        organization_id = batch_organizations[incident["contaminated_batch_code"]]
         incident_count += graph.add_contamination_incident(
             organization_id, incident["incident_id"], incident["severity"],
             incident["contaminated_batch_code"], incident["expected_affected_batch_codes"],

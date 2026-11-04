@@ -36,13 +36,13 @@ class GraphProjectionService:
         self.resolver = EntityResolver(profiles)
         self.projector = GenealogyProjector(store)
 
-    def project(self, events: list[EventIngestEnvelope]) -> ProjectionSummary:
+    def project(self, events: list[EventIngestEnvelope], context_id=None, dataset_version_id=None) -> ProjectionSummary:
         gaps = Counter[str]()
         projected = nodes = edges = 0
         with self.store.batch_write():
             for event in events:
                 bindings = self._bindings(event)
-                result = self.projector.project_event(event, bindings)
+                result = self.projector.project_event(event, bindings, context_id, dataset_version_id)
                 nodes += result.nodes_written
                 edges += result.edges_written
                 if result.nodes_written or result.edges_written:

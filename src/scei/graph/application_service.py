@@ -18,7 +18,7 @@ class ResolutionApplicationService:
     def __init__(self, store: SQLiteCanonicalStore) -> None:
         self.store = store
 
-    def apply(self, organization_id: UUID, review_id: UUID) -> dict[str, object]:
+    def apply(self, organization_id: UUID, review_id: UUID, context_id: UUID | None = None) -> dict[str, object]:
         with self.store.application_lock:
             review = self.store.get_resolution_review(organization_id, review_id)
             if review is None:
@@ -39,10 +39,19 @@ class ResolutionApplicationService:
                 selected_entity = UUID(str(selected_entity_id))
                 if not self.store.entity_belongs_to_tenant(organization_id, selected_entity):
                     raise ResolutionApplicationError("selected entity does not belong to the tenant")
-                events = self.store.list_events_referencing(
-                    organization_id, str(applying["field_name"]), str(applying["observed_value"])
+                events = self.store.list_events_referencing_identifier(
+                    organization_id, str(applying["observed_value"])
                 )
                 profiles = self._profiles(organization_id)
+                dataset_version_id = None
+                if context_id is not None:
+                    context = self.store.connection.execute(
+                        "SELECT dataset_version_id FROM investigation_contexts WHERE context_id=? AND organization_id=? AND status='active'",
+                        (str(context_id), str(organization_id)),
+                    ).fetchone()
+                    if context is None:
+                        raise ResolutionApplicationError("active investigation context not found")
+                    dataset_version_id = UUID(context["dataset_version_id"])
                 with self.store.batch_write():
                     self.store.add_resolution_mapping(
                         organization_id=organization_id,
@@ -55,7 +64,7 @@ class ResolutionApplicationService:
                         reviewer_id=str(applying["reviewer_id"]),
                         decision_at=str(applying["reviewed_at"] or datetime.now(UTC).isoformat()),
                     )
-                    summary = GraphProjectionService(self.store, profiles).project(events)
+                    summary = GraphProjectionService(self.store, profiles).project(events, context_id, dataset_version_id)
                     self.store.mark_review_applied(organization_id, review_id)
                 applied = self.store.get_resolution_review(organization_id, review_id)
                 assert applied is not None
@@ -65,7 +74,7 @@ class ResolutionApplicationService:
                 raise
 
     def _profiles(self, organization_id: UUID) -> list[EntityProfile]:
-        return [
+        graph_profiles = [
             EntityProfile(
                 entity_id=UUID(row["node_id"]),
                 organization_id=organization_id,
@@ -75,6 +84,7 @@ class ResolutionApplicationService:
             )
             for row in self.store.list_graph_nodes(organization_id)
         ]
+        return graph_profiles + self.store.registry_profiles(organization_id)
 
     @staticmethod
     def _result(

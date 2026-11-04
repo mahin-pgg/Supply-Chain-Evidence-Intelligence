@@ -134,9 +134,9 @@ def create_app(
         return result
 
     @app.post("/v1/reviews/resolution/{review_id}/apply")
-    def apply_resolution_review(review_id: UUID, organization_id: UUID) -> dict[str, object]:
+    def apply_resolution_review(review_id: UUID, organization_id: UUID, context_id: UUID | None = None) -> dict[str, object]:
         try:
-            return ResolutionApplicationService(canonical_store).apply(organization_id, review_id)
+            return ResolutionApplicationService(canonical_store).apply(organization_id, review_id, context_id)
         except ResolutionApplicationError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -281,6 +281,13 @@ def create_app(
             include_possible=request.include_possible, context_id=request.context_id,
         )
         return {"incident": incident, "graph_node_id": node_id, "genealogy": genealogy, "contamination_impact": impact}
+
+    @app.post("/v1/investigations/incident/{incident_id}/review")
+    def create_incident_review(incident_id: str, organization_id: UUID) -> dict[str, object]:
+        review = canonical_store.create_incident_review(organization_id, incident_id)
+        if review is None:
+            raise HTTPException(status_code=404, detail="incident or matching event not found")
+        return review
 
     @app.post("/v1/genealogy/traverse")
     def traverse_genealogy(request: GenealogyQuery):

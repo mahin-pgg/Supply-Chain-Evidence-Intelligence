@@ -7,10 +7,11 @@ from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from scei.graph.models import GraphEdge, GraphNode
 from scei.ingestion.models import EventIngestEnvelope, EvidenceRecordIngest, SourceDocumentIngest
+from scei.resolution.models import EntityProfile
 from scei.resolution.normalization import normalize_identifier, normalize_text
 
 SCHEMA = """
@@ -682,13 +683,71 @@ class SQLiteCanonicalStore:
         return {**dict(row), "candidates": json.loads(row["candidates_json"])}
 
     def entity_belongs_to_tenant(self, organization_id: UUID, entity_id: UUID) -> bool:
-        return (
+        graph_match = (
             self.connection.execute(
                 "SELECT 1 FROM graph_nodes WHERE organization_id = ? AND node_id = ?",
                 (str(organization_id), str(entity_id)),
             ).fetchone()
             is not None
         )
+        if graph_match:
+            return True
+        try:
+            return self.connection.execute(
+                "SELECT 1 FROM canonical_entities WHERE organization_id=? AND entity_id=? AND status='active'",
+                (str(organization_id), str(entity_id)),
+            ).fetchone() is not None
+        except sqlite3.OperationalError:
+            return False
+
+    def registry_profiles(self, organization_id: UUID) -> list[EntityProfile]:
+        try:
+            entities = self.connection.execute(
+                "SELECT * FROM canonical_entities WHERE organization_id=? AND status='active'",
+                (str(organization_id),),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        profiles = []
+        for entity in entities:
+            identifiers = [
+                row["raw_value"] for row in self.connection.execute(
+                    "SELECT raw_value FROM entity_identifiers WHERE organization_id=? AND entity_id=? AND status='active'",
+                    (str(organization_id), entity["entity_id"]),
+                )
+            ]
+            profiles.append(EntityProfile(
+                entity_id=UUID(entity["entity_id"]), organization_id=organization_id,
+                entity_type=entity["entity_type"], canonical_name=entity["canonical_name"],
+                identifiers=identifiers,
+            ))
+        return profiles
+
+    def create_incident_review(self, organization_id: UUID, incident_id: str) -> dict[str, object] | None:
+        incident = self.get_contamination_incident(organization_id, incident_id)
+        if incident is None:
+            return None
+        observed = str(incident["contaminated_batch_code"])
+        event = next((event for event in self.list_event_envelopes(organization_id)
+                      if observed in {str(value) for key, value in event.payload.items()
+                                      if key in {"batch_code", "source_batch_code", "input_batch_code", "destination_batch_code"}}), None)
+        if event is None:
+            return None
+        field = next(key for key, value in event.payload.items() if key in {"batch_code", "source_batch_code", "input_batch_code", "destination_batch_code"} and str(value) == observed)
+        try:
+            rows = self.connection.execute(
+                """SELECT e.*, i.identifier_id, i.raw_value FROM canonical_entities e
+                   JOIN entity_identifiers i ON i.organization_id=e.organization_id AND i.entity_id=e.entity_id
+                  WHERE e.organization_id=? AND e.entity_type='batch' AND e.status='active'
+                    AND i.status='active' AND i.normalized_value=?""",
+                (str(organization_id), normalize_identifier(observed)),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        candidates = [{"entity_id": row["entity_id"], "score": 1.0, "state": "VERIFIED", "signals": [{"name": "registry_exact", "score": 1.0, "explanation": "Exact active registry identifier."}]} for row in rows]
+        review_id = uuid5(UUID(int=0), f"incident-review:{organization_id}:{incident_id}")
+        self.add_resolution_review(organization_id, review_id, event.event_id, field, "batch", observed, candidates, "Contamination incident requires review before impact projection.")
+        return self.get_resolution_review(organization_id, review_id)
 
     def add_resolution_mapping(
         self,
@@ -755,6 +814,16 @@ class SQLiteCanonicalStore:
         events = self.list_event_envelopes(organization_id)
         return [
             event for event in events if event.payload.get(field_name) == observed_identifier
+        ]
+
+    def list_events_referencing_identifier(
+        self, organization_id: UUID, observed_identifier: str
+    ) -> list[EventIngestEnvelope]:
+        """Return every event field that uses an approved observed identifier."""
+        binding_fields = {"batch_code", "source_batch_code", "destination_batch_code", "input_batch_code", "product_code"}
+        return [
+            event for event in self.list_event_envelopes(organization_id)
+            if any(str(event.payload.get(field)) == observed_identifier for field in binding_fields)
         ]
 
     def begin_review_application(self, organization_id: UUID, review_id: UUID) -> dict[str, object] | None:
