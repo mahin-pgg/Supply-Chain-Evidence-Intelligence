@@ -264,7 +264,7 @@ def test_investigation_console_is_available():
     store = SQLiteCanonicalStore()
     response = TestClient(create_app(store)).get("/ui")
     assert response.status_code == 200
-    assert "SCEI Investigation Console" in response.text
+    assert "Supply Chain Investigation" in response.text
     store.close()
 
 
