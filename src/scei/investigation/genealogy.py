@@ -122,6 +122,7 @@ class GenealogyEngine:
             start_node_id=start_node_id,
             direction=direction,
             context_id=context_id,
+            max_paths=max_paths,
             dataset_version_id=self._dataset_version(edges),
             projection_run_ids=self._projection_runs(edges),
             paths=paths,
@@ -180,6 +181,7 @@ class GenealogyEngine:
         max_hops: int = 20,
         include_possible: bool = True,
         context_id: UUID | None = None,
+        max_paths: int = 5000,
     ) -> ImpactAnalysis:
         traversal = self.traverse(
             organization_id,

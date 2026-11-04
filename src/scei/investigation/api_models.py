@@ -9,6 +9,7 @@ class ContaminationInvestigationRequest(BaseModel):
     context_id: UUID | None = None
     max_hops: int = Field(default=20, ge=1, le=100)
     include_possible: bool = False
+    max_paths: int = Field(default=500, ge=1, le=5000)
 
 
 class IncidentInvestigationRequest(BaseModel):
@@ -17,6 +18,7 @@ class IncidentInvestigationRequest(BaseModel):
     context_id: UUID | None = None
     max_hops: int = Field(default=20, ge=1, le=100)
     include_possible: bool = False
+    max_paths: int = Field(default=500, ge=1, le=5000)
 
 
 class GenealogyQuery(BaseModel):
@@ -26,6 +28,7 @@ class GenealogyQuery(BaseModel):
     direction: str = "downstream"
     max_hops: int = Field(default=20, ge=1, le=100)
     include_possible: bool = False
+    max_paths: int = Field(default=500, ge=1, le=5000)
 
 
 class BatchInvestigationRequest(BaseModel):
@@ -34,3 +37,4 @@ class BatchInvestigationRequest(BaseModel):
     context_id: UUID | None = None
     max_hops: int = Field(default=20, ge=1, le=100)
     include_possible: bool = False
+    max_paths: int = Field(default=500, ge=1, le=5000)

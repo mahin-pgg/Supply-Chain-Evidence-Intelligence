@@ -208,6 +208,7 @@ def create_app(
                 max_hops=request.max_hops,
                 include_possible=request.include_possible,
                 context_id=request.context_id,
+                max_paths=request.max_paths,
             ).model_dump(mode="json")
             impact = engine.analyze_contamination(
                 request.organization_id,
@@ -215,8 +216,10 @@ def create_app(
                 max_hops=request.max_hops,
                 include_possible=request.include_possible,
                 context_id=request.context_id,
+                max_paths=request.max_paths,
             ).model_dump(mode="json")
         return {
+            "investigation_id": uuid4(),
             "organization_id": request.organization_id,
             "query": request.batch_query,
             "resolved_identifiers": identifiers,
@@ -295,7 +298,7 @@ def create_app(
     def investigate_contamination(request: ContaminationInvestigationRequest):
         return GenealogyEngine(canonical_store).analyze_contamination(
             request.organization_id, request.contaminated_node_id, max_hops=request.max_hops,
-            include_possible=request.include_possible, context_id=request.context_id,
+            include_possible=request.include_possible, context_id=request.context_id, max_paths=request.max_paths,
         )
 
     @app.post("/v1/investigations/incident")
@@ -313,13 +316,13 @@ def create_app(
         engine = GenealogyEngine(canonical_store)
         genealogy = engine.traverse(
             request.organization_id, node_id, direction="downstream", max_hops=request.max_hops,
-            include_possible=request.include_possible, context_id=request.context_id,
+            include_possible=request.include_possible, context_id=request.context_id, max_paths=request.max_paths,
         )
         impact = engine.analyze_contamination(
             request.organization_id, node_id, max_hops=request.max_hops,
-            include_possible=request.include_possible, context_id=request.context_id,
+            include_possible=request.include_possible, context_id=request.context_id, max_paths=request.max_paths,
         )
-        return {"incident": incident, "graph_node_id": node_id, "genealogy": genealogy, "contamination_impact": impact}
+        return {"investigation_id": uuid4(), "incident": incident, "graph_node_id": node_id, "genealogy": genealogy, "contamination_impact": impact}
 
     @app.post("/v1/investigations/incident/{incident_id}/review")
     def create_incident_review(incident_id: str, organization_id: UUID) -> dict[str, object]:
@@ -333,6 +336,7 @@ def create_app(
         incident_id: str, organization_id: UUID, context_id: UUID | None = None,
         max_hops: int = Query(default=20, ge=1, le=100),
         include_possible: bool = False,
+        max_paths: int = Query(default=500, ge=1, le=5000),
     ) -> dict[str, object]:
         incident = canonical_store.get_contamination_incident(organization_id, incident_id)
         if incident is None:
@@ -343,9 +347,9 @@ def create_app(
         if node_id is None:
             raise HTTPException(status_code=409, detail="contaminated batch is not projected in context")
         engine = GenealogyEngine(canonical_store)
-        upstream = engine.traverse(organization_id, node_id, direction="upstream", max_hops=max_hops, include_possible=include_possible, context_id=context_id)
-        downstream = engine.traverse(organization_id, node_id, direction="downstream", max_hops=max_hops, include_possible=include_possible, context_id=context_id)
-        impact = engine.analyze_contamination(organization_id, node_id, max_hops=max_hops, include_possible=include_possible, context_id=context_id)
+        upstream = engine.traverse(organization_id, node_id, direction="upstream", max_hops=max_hops, max_paths=max_paths, include_possible=include_possible, context_id=context_id)
+        downstream = engine.traverse(organization_id, node_id, direction="downstream", max_hops=max_hops, max_paths=max_paths, include_possible=include_possible, context_id=context_id)
+        impact = engine.analyze_contamination(organization_id, node_id, max_hops=max_hops, max_paths=max_paths, include_possible=include_possible, context_id=context_id)
         nodes = canonical_store.list_graph_nodes(organization_id, context_id=context_id)
         labels = {str(row["node_id"]): str(row["label"]) for row in nodes if row["node_type"] == "batch"}
         observed = sorted({labels.get(str(path.node_ids[-1]), str(path.node_ids[-1])) for path in downstream.paths})
@@ -353,7 +357,7 @@ def create_app(
         matched = [code for code in expected if code in observed]
         warnings = sorted(set(upstream.completeness_warnings + downstream.completeness_warnings + impact.unresolved_gaps))
         return {
-            "incident": incident,
+            "investigation_id": uuid4(),
             "context_id": context_id,
             "contaminated_node_id": node_id,
             "upstream": upstream,
@@ -372,6 +376,7 @@ def create_app(
             request.node_id,
             direction=request.direction,
             max_hops=request.max_hops,
+            max_paths=request.max_paths,
             include_possible=request.include_possible,
             context_id=request.context_id,
         )
