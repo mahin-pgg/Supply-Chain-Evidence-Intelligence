@@ -131,3 +131,32 @@ def test_multihop_path_contains_provenance_quantity_and_completeness_warnings():
     assert path.quantity_warnings == []
     assert any(item.startswith("pending_resolution_reviews:") for item in result.completeness_warnings)
     store.close()
+
+
+def test_context_filter_prevents_historical_graph_mixing():
+    tenant = uuid4()
+    context_a, context_b = uuid4(), uuid4()
+    raw, product_a, product_b = uuid4(), uuid4(), uuid4()
+    event_a, event_b = uuid4(), uuid4()
+    store = SQLiteCanonicalStore()
+    for node_id, node_type, context in [
+        (raw, "batch", context_a), (product_a, "product", context_a),
+        (product_b, "product", context_b),
+    ]:
+        store.upsert_graph_node(
+            GraphNode(organization_id=tenant, node_id=node_id, node_type=node_type, label=str(node_id)),
+            context_id=context, dataset_version_id=uuid4(), projection_run_id=uuid4(),
+        )
+    store.add_graph_edge(
+        edge(tenant, raw, product_a, event_a), context_id=context_a,
+        dataset_version_id=uuid4(), projection_run_id=uuid4(),
+    )
+    store.add_graph_edge(
+        edge(tenant, raw, product_b, event_b), context_id=context_b,
+        dataset_version_id=uuid4(), projection_run_id=uuid4(),
+    )
+    result = GenealogyEngine(store).traverse(tenant, raw, context_id=context_a)
+    assert [path.node_ids[-1] for path in result.paths] == [product_a]
+    assert result.context_id == context_a
+    assert result.projection_run_ids
+    store.close()

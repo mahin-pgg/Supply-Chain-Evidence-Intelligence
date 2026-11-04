@@ -808,31 +808,37 @@ class SQLiteCanonicalStore:
         return cursor.rowcount == 1
 
     def list_graph_edges(
-        self, organization_id: UUID, source_node_id: UUID | None = None, limit: int = 100
+        self, organization_id: UUID, source_node_id: UUID | None = None, limit: int = 100,
+        context_id: UUID | None = None,
     ) -> list[dict[str, object]]:
+        context_clause = " AND context_id = ?" if context_id else ""
+        context_param = (str(context_id),) if context_id else ()
         if source_node_id is None:
             rows = self.connection.execute(
-                "SELECT * FROM graph_edges WHERE organization_id = ? ORDER BY created_at LIMIT ?",
-                (str(organization_id), limit),
+                f"SELECT * FROM graph_edges WHERE organization_id = ?{context_clause} ORDER BY created_at LIMIT ?",
+                (str(organization_id), *context_param, limit),
             )
         else:
             rows = self.connection.execute(
-                "SELECT * FROM graph_edges WHERE organization_id = ? AND source_node_id = ? ORDER BY created_at LIMIT ?",
-                (str(organization_id), str(source_node_id), limit),
+                f"SELECT * FROM graph_edges WHERE organization_id = ? AND source_node_id = ?{context_clause} ORDER BY created_at LIMIT ?",
+                (str(organization_id), str(source_node_id), *context_param, limit),
             )
         return [dict(row) for row in rows]
 
     def list_graph_nodes(
-        self, organization_id: UUID, node_type: str | None = None, limit: int = 10000
+        self, organization_id: UUID, node_type: str | None = None, limit: int = 10000,
+        context_id: UUID | None = None,
     ) -> list[dict[str, object]]:
+        context_clause = " AND context_id = ?" if context_id else ""
+        context_param = (str(context_id),) if context_id else ()
         if node_type is None:
             rows = self.connection.execute(
-                "SELECT * FROM graph_nodes WHERE organization_id = ? LIMIT ?",
-                (str(organization_id), limit),
+                f"SELECT * FROM graph_nodes WHERE organization_id = ?{context_clause} LIMIT ?",
+                (str(organization_id), *context_param, limit),
             )
         else:
             rows = self.connection.execute(
-                "SELECT * FROM graph_nodes WHERE organization_id = ? AND node_type = ? LIMIT ?",
-                (str(organization_id), node_type, limit),
+                f"SELECT * FROM graph_nodes WHERE organization_id = ? AND node_type = ?{context_clause} LIMIT ?",
+                (str(organization_id), node_type, *context_param, limit),
             )
         return [dict(row) for row in rows]

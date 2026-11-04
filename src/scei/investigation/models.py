@@ -21,6 +21,9 @@ class GenealogyResult(BaseModel):
     organization_id: UUID
     start_node_id: UUID
     direction: str
+    context_id: UUID | None = None
+    dataset_version_id: UUID | None = None
+    projection_run_ids: list[UUID] = Field(default_factory=list)
     paths: list[GenealogyPath] = Field(default_factory=list)
     visited_node_ids: list[UUID] = Field(default_factory=list)
     cycle_count: int = 0
@@ -39,6 +42,8 @@ class ImpactProduct(BaseModel):
 class ImpactAnalysis(BaseModel):
     organization_id: UUID
     contaminated_node_id: UUID
+    context_id: UUID | None = None
+    dataset_version_id: UUID | None = None
     confirmed_products: list[ImpactProduct] = Field(default_factory=list)
     possible_products: list[ImpactProduct] = Field(default_factory=list)
     facilities: list[UUID] = Field(default_factory=list)

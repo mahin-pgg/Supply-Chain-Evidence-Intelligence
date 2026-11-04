@@ -33,12 +33,14 @@ class GenealogyEngine:
         max_hops: int = 20,
         max_paths: int = 5000,
         include_possible: bool = True,
+        context_id: UUID | None = None,
     ) -> GenealogyResult:
         if direction not in {"upstream", "downstream"}:
             raise ValueError("direction must be upstream or downstream")
-        edges = self.store.list_graph_edges(organization_id, limit=max_paths * 4)
+        edges = self.store.list_graph_edges(organization_id, limit=max_paths * 4, context_id=context_id)
         tenant_nodes = {
-            UUID(row["node_id"]) for row in self.store.list_graph_nodes(organization_id)
+            UUID(row["node_id"])
+            for row in self.store.list_graph_nodes(organization_id, context_id=context_id)
         }
         node_edges: dict[UUID, list[dict[str, object]]] = {}
         edge_index: dict[UUID, dict[str, object]] = {}
@@ -119,6 +121,9 @@ class GenealogyEngine:
             organization_id=organization_id,
             start_node_id=start_node_id,
             direction=direction,
+            context_id=context_id,
+            dataset_version_id=self._dataset_version(edges),
+            projection_run_ids=self._projection_runs(edges),
             paths=paths,
             visited_node_ids=list(visited),
             cycle_count=cycle_count,
@@ -135,6 +140,9 @@ class GenealogyEngine:
             "target_node_id": edge["target_node_id"],
             "edge_type": edge["edge_type"],
             "event_id": edge["event_id"],
+            "context_id": edge.get("context_id"),
+            "dataset_version_id": edge.get("dataset_version_id"),
+            "projection_run_id": edge.get("projection_run_id"),
             "relationship_state": edge["relationship_state"],
             "quantity": json.loads(edge["quantity_json"]) if edge["quantity_json"] else None,
             "provenance": json.loads(edge["provenance_json"]),
@@ -171,6 +179,7 @@ class GenealogyEngine:
         *,
         max_hops: int = 20,
         include_possible: bool = True,
+        context_id: UUID | None = None,
     ) -> ImpactAnalysis:
         traversal = self.traverse(
             organization_id,
@@ -178,10 +187,11 @@ class GenealogyEngine:
             direction="downstream",
             max_hops=max_hops,
             include_possible=include_possible,
+            context_id=context_id,
         )
         node_types = {
             UUID(row["node_id"]): row["node_type"]
-            for row in self.store.list_graph_nodes(organization_id)
+            for row in self.store.list_graph_nodes(organization_id, context_id=context_id)
         }
         products: dict[UUID, list[GenealogyPath]] = {}
         facilities: set[UUID] = set()
@@ -223,6 +233,8 @@ class GenealogyEngine:
         return ImpactAnalysis(
             organization_id=organization_id,
             contaminated_node_id=contaminated_node_id,
+            context_id=context_id,
+            dataset_version_id=self._dataset_version_from_paths(traversal.paths),
             confirmed_products=sorted(confirmed, key=lambda item: item.shortest_hops),
             possible_products=sorted(possible, key=lambda item: item.shortest_hops),
             facilities=sorted(facilities, key=str),
@@ -241,3 +253,24 @@ class GenealogyEngine:
             ResolutionState.CONTRADICTED: 3,
             ResolutionState.UNKNOWN: 4,
         }[state]
+
+    @staticmethod
+    def _dataset_version(edges: list[dict[str, object]]) -> UUID | None:
+        values = {UUID(row["dataset_version_id"]) for row in edges if row.get("dataset_version_id")}
+        return next(iter(values)) if len(values) == 1 else None
+
+    @staticmethod
+    def _projection_runs(edges: list[dict[str, object]]) -> list[UUID]:
+        return sorted(
+            {UUID(row["projection_run_id"]) for row in edges if row.get("projection_run_id")},
+            key=str,
+        )
+
+    @staticmethod
+    def _dataset_version_from_paths(paths: list[GenealogyPath]) -> UUID | None:
+        versions = {
+            UUID(detail["dataset_version_id"])
+            for path in paths for detail in path.edge_details
+            if detail.get("dataset_version_id")
+        }
+        return next(iter(versions)) if len(versions) == 1 else None

@@ -167,12 +167,14 @@ def create_app(
                 node_id,
                 max_hops=request.max_hops,
                 include_possible=request.include_possible,
+                context_id=request.context_id,
             ).model_dump(mode="json")
             impact = engine.analyze_contamination(
                 request.organization_id,
                 node_id,
                 max_hops=request.max_hops,
                 include_possible=request.include_possible,
+                context_id=request.context_id,
             ).model_dump(mode="json")
         return {
             "organization_id": request.organization_id,
@@ -252,7 +254,8 @@ def create_app(
     @app.post("/v1/investigations/contamination")
     def investigate_contamination(request: ContaminationInvestigationRequest):
         return GenealogyEngine(canonical_store).analyze_contamination(
-            request.organization_id, request.contaminated_node_id, max_hops=request.max_hops
+            request.organization_id, request.contaminated_node_id, max_hops=request.max_hops,
+            include_possible=request.include_possible, context_id=request.context_id,
         )
 
     @app.post("/v1/genealogy/traverse")
@@ -263,6 +266,7 @@ def create_app(
             direction=request.direction,
             max_hops=request.max_hops,
             include_possible=request.include_possible,
+            context_id=request.context_id,
         )
 
     return app
