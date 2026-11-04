@@ -56,6 +56,34 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "scei-api"}
 
+    @app.get("/v1/datasets/contexts")
+    def list_dataset_contexts(organization_id: UUID, workspace_id: UUID | None = None) -> dict[str, object]:
+        try:
+            query = "SELECT * FROM investigation_contexts WHERE organization_id=?"
+            params: list[object] = [str(organization_id)]
+            if workspace_id is not None:
+                query += " AND workspace_id=?"
+                params.append(str(workspace_id))
+            query += " ORDER BY created_at DESC"
+            rows = [dict(row) for row in canonical_store.connection.execute(query, params)]
+        except Exception as error:
+            raise HTTPException(status_code=404, detail="dataset context store not available") from error
+        return {"organization_id": organization_id, "total": len(rows), "contexts": rows}
+
+    @app.get("/v1/datasets/contexts/{context_id}")
+    def get_dataset_context(context_id: UUID, organization_id: UUID) -> dict[str, object]:
+        row = canonical_store.connection.execute(
+            "SELECT * FROM investigation_contexts WHERE context_id=? AND organization_id=?",
+            (str(context_id), str(organization_id)),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="dataset context not found")
+        result = dict(row)
+        result["projection_runs"] = [dict(item) for item in canonical_store.connection.execute(
+            "SELECT * FROM projection_runs WHERE context_id=? ORDER BY started_at", (str(context_id),)
+        )]
+        return result
+
     @app.get("/v1/search/evidence", response_model=EvidenceSearchResponse)
     def search_evidence(
         organization_id: UUID,

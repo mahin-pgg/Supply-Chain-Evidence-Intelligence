@@ -244,6 +244,22 @@ def test_resolution_decision_history_is_immutable_and_tenant_scoped():
     store.close()
 
 
+def test_dataset_context_api_is_tenant_scoped():
+    store = SQLiteCanonicalStore()
+    client = TestClient(create_app(store))
+    tenant = uuid4()
+    context_id = uuid4()
+    store.connection.execute("CREATE TABLE investigation_contexts (context_id TEXT PRIMARY KEY, organization_id TEXT NOT NULL, workspace_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    store.connection.execute("CREATE TABLE projection_runs (projection_run_id TEXT PRIMARY KEY, context_id TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    store.connection.execute("INSERT INTO investigation_contexts(context_id, organization_id, workspace_id, status) VALUES (?, ?, ?, 'active')", (str(context_id), str(tenant), str(uuid4())))
+    store.connection.commit()
+    response = client.get("/v1/datasets/contexts", params={"organization_id": str(tenant)})
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert client.get(f"/v1/datasets/contexts/{context_id}", params={"organization_id": str(uuid4())}).status_code == 404
+    store.close()
+
+
 def test_resolution_review_queue_is_tenant_scoped_and_decidable():
     store = SQLiteCanonicalStore()
     client = TestClient(create_app(store))
