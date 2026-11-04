@@ -163,10 +163,16 @@ def create_app(
         else:
             engine = GenealogyEngine(canonical_store)
             genealogy = engine.traverse(
-                request.organization_id, node_id, max_hops=request.max_hops
+                request.organization_id,
+                node_id,
+                max_hops=request.max_hops,
+                include_possible=request.include_possible,
             ).model_dump(mode="json")
             impact = engine.analyze_contamination(
-                request.organization_id, node_id, max_hops=request.max_hops
+                request.organization_id,
+                node_id,
+                max_hops=request.max_hops,
+                include_possible=request.include_possible,
             ).model_dump(mode="json")
         return {
             "organization_id": request.organization_id,
@@ -256,6 +262,7 @@ def create_app(
             request.node_id,
             direction=request.direction,
             max_hops=request.max_hops,
+            include_possible=request.include_possible,
         )
 
     return app

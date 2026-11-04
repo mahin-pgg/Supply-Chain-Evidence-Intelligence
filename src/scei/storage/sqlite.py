@@ -579,6 +579,14 @@ class SQLiteCanonicalStore:
             for row in rows
         ]
 
+    def count_resolution_reviews(self, organization_id: UUID, status: str = "pending") -> int:
+        return int(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM resolution_reviews WHERE organization_id = ? AND status = ?",
+                (str(organization_id), status),
+            ).fetchone()[0]
+        )
+
     def resolve_resolution_review(
         self,
         organization_id: UUID,

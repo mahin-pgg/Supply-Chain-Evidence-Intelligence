@@ -58,6 +58,10 @@ Projection uses exact tenant-scoped identifiers by default. Unresolved or corrup
 
 Projection gaps are persisted in the resolution review queue. Use `GET /v1/reviews/resolution` to list tenant-scoped pending reviews and `POST /v1/reviews/resolution/{review_id}` to approve or reject a proposed resolution.
 
+## Genealogy investigation
+
+Use `POST /v1/genealogy/traverse` with `direction`, `max_hops`, and `include_possible`. Each returned path includes the relationship state, source event, document provenance, quantity flow, and completeness warnings. By default, the API traverses only verified and probable relationships; set `include_possible` to `true` when exploratory possible links are required.
+
 ## Synthetic development data
 
 The Bangladesh-oriented data generator is documented in [docs/data/README.md](docs/data/README.md). It produces deterministic, gzip-compressed JSONL with realistic supply-chain messiness and ground-truth incident impact. Generated data is intentionally ignored by Git.

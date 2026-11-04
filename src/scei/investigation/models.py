@@ -11,6 +11,9 @@ class GenealogyPath(BaseModel):
     node_ids: list[UUID] = Field(min_length=1)
     edge_ids: list[UUID] = Field(default_factory=list)
     relationship_states: list[ResolutionState] = Field(default_factory=list)
+    edge_details: list[dict[str, object]] = Field(default_factory=list)
+    quantity_flow: list[dict[str, object]] = Field(default_factory=list)
+    quantity_warnings: list[str] = Field(default_factory=list)
     hop_count: int = Field(ge=0)
 
 
@@ -23,6 +26,7 @@ class GenealogyResult(BaseModel):
     cycle_count: int = 0
     truncated: bool = False
     gaps: list[str] = Field(default_factory=list)
+    completeness_warnings: list[str] = Field(default_factory=list)
 
 
 class ImpactProduct(BaseModel):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import deque
 from dataclasses import dataclass
 from uuid import UUID
@@ -36,17 +37,28 @@ class GenealogyEngine:
         if direction not in {"upstream", "downstream"}:
             raise ValueError("direction must be upstream or downstream")
         edges = self.store.list_graph_edges(organization_id, limit=max_paths * 4)
+        tenant_nodes = {
+            UUID(row["node_id"]) for row in self.store.list_graph_nodes(organization_id)
+        }
         node_edges: dict[UUID, list[dict[str, object]]] = {}
+        edge_index: dict[UUID, dict[str, object]] = {}
+        gaps: list[str] = []
         for edge in edges:
+            edge_id = UUID(edge["edge_id"])
+            source_id = UUID(edge["source_node_id"])
+            target_id = UUID(edge["target_node_id"])
+            if source_id not in tenant_nodes or target_id not in tenant_nodes:
+                gaps.append(f"cross_tenant_or_missing_node:{edge_id}")
+                continue
             key = UUID(
                 edge["source_node_id"] if direction == "downstream" else edge["target_node_id"]
             )
             node_edges.setdefault(key, []).append(edge)
+            edge_index[edge_id] = edge
         queue: deque[_Frontier] = deque([_Frontier(start_node_id, (start_node_id,), (), ())])
         paths: list[GenealogyPath] = []
         visited: set[UUID] = {start_node_id}
         cycle_count = 0
-        gaps: list[str] = []
         truncated = False
         allowed_states = (
             {ResolutionState.VERIFIED, ResolutionState.PROBABLE, ResolutionState.POSSIBLE}
@@ -74,11 +86,17 @@ class GenealogyEngine:
                 edge_path = frontier.edge_path + (UUID(edge["edge_id"]),)
                 states = frontier.states + (state,)
                 visited.add(next_id)
+                path_edges = [edge_index[edge_id] for edge_id in edge_path]
+                edge_details = [self._edge_detail(item) for item in path_edges]
+                quantity_flow, quantity_warnings = self._quantity_flow(path_edges)
                 paths.append(
                     GenealogyPath(
                         node_ids=list(node_path),
                         edge_ids=list(edge_path),
                         relationship_states=list(states),
+                        edge_details=edge_details,
+                        quantity_flow=quantity_flow,
+                        quantity_warnings=quantity_warnings,
                         hop_count=len(edge_path),
                     )
                 )
@@ -87,6 +105,16 @@ class GenealogyEngine:
                     queue.clear()
                     break
                 queue.append(_Frontier(next_id, node_path, edge_path, states))
+        warnings = []
+        pending_reviews = self.store.count_resolution_reviews(organization_id)
+        if pending_reviews:
+            warnings.append(f"pending_resolution_reviews:{pending_reviews}")
+        if gaps:
+            warnings.append("unresolved_projection_gaps_may_reduce_completeness")
+        if cycle_count:
+            warnings.append(f"cycles_detected:{cycle_count}")
+        if truncated:
+            warnings.append("traversal_limit_reached")
         return GenealogyResult(
             organization_id=organization_id,
             start_node_id=start_node_id,
@@ -96,17 +124,60 @@ class GenealogyEngine:
             cycle_count=cycle_count,
             truncated=truncated,
             gaps=sorted(set(gaps)),
+            completeness_warnings=sorted(set(warnings)),
         )
 
+    @staticmethod
+    def _edge_detail(edge: dict[str, object]) -> dict[str, object]:
+        return {
+            "edge_id": edge["edge_id"],
+            "source_node_id": edge["source_node_id"],
+            "target_node_id": edge["target_node_id"],
+            "edge_type": edge["edge_type"],
+            "event_id": edge["event_id"],
+            "relationship_state": edge["relationship_state"],
+            "quantity": json.loads(edge["quantity_json"]) if edge["quantity_json"] else None,
+            "provenance": json.loads(edge["provenance_json"]),
+        }
+
+    @staticmethod
+    def _quantity_flow(edges: list[dict[str, object]]) -> tuple[list[dict[str, object]], list[str]]:
+        flow = []
+        units: set[str] = set()
+        warnings = []
+        for edge in edges:
+            quantity = json.loads(edge["quantity_json"]) if edge["quantity_json"] else None
+            if not quantity or "value" not in quantity or "unit" not in quantity:
+                warnings.append(f"quantity_missing:{edge['edge_id']}")
+                continue
+            unit = str(quantity["unit"])
+            units.add(unit)
+            flow.append(
+                {
+                    "edge_id": edge["edge_id"],
+                    "event_id": edge["event_id"],
+                    "value": quantity["value"],
+                    "unit": unit,
+                }
+            )
+        if len(units) > 1:
+            warnings.append("quantity_units_mismatch:" + ",".join(sorted(units)))
+        return flow, warnings
+
     def analyze_contamination(
-        self, organization_id: UUID, contaminated_node_id: UUID, *, max_hops: int = 20
+        self,
+        organization_id: UUID,
+        contaminated_node_id: UUID,
+        *,
+        max_hops: int = 20,
+        include_possible: bool = True,
     ) -> ImpactAnalysis:
         traversal = self.traverse(
             organization_id,
             contaminated_node_id,
             direction="downstream",
             max_hops=max_hops,
-            include_possible=True,
+            include_possible=include_possible,
         )
         node_types = {
             UUID(row["node_id"]): row["node_type"]
