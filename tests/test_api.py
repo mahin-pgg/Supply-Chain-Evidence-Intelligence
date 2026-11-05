@@ -276,6 +276,20 @@ def test_review_console_is_available():
     store.close()
 
 
+def test_review_assistance_is_advisory_and_tenant_scoped():
+    store = SQLiteCanonicalStore()
+    tenant = uuid4()
+    review_id, event_id = uuid4(), uuid4()
+    store.add_resolution_review(tenant, review_id, event_id, "batch_code", "batch", "BATCH-A", [], "test")
+    response = TestClient(create_app(store)).post(f"/v1/reviews/resolution/{review_id}/assistance", params={"organization_id": str(tenant)})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["advisory_only"] is True
+    assert body["recommendation"] == "insufficient_evidence"
+    assert TestClient(create_app(store)).post(f"/v1/reviews/resolution/{review_id}/assistance", params={"organization_id": str(uuid4())}).status_code == 404
+    store.close()
+
+
 def test_evaluation_summary_is_tenant_scoped():
     store = SQLiteCanonicalStore()
     tenant = uuid4()

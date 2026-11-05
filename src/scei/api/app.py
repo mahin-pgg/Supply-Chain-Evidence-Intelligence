@@ -29,6 +29,7 @@ from scei.investigation.api_models import (
 )
 from scei.investigation.genealogy import GenealogyEngine
 from scei.retrieval.api_models import EventSearchResponse, EvidenceSearchResponse, bounded_limit
+from scei.review_assistance import ReviewAssistanceService
 from scei.storage.sqlite import SQLiteCanonicalStore
 
 
@@ -196,6 +197,13 @@ def create_app(
             "review_id": review_id,
             "decisions": canonical_store.list_review_decisions(organization_id, review_id),
         }
+
+    @app.post("/v1/reviews/resolution/{review_id}/assistance")
+    def resolution_review_assistance(review_id: UUID, organization_id: UUID) -> dict[str, object]:
+        try:
+            return ReviewAssistanceService(canonical_store).assist(organization_id, review_id).as_dict()
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
 
     @app.post("/v1/investigations/batch")
     def investigate_batch(request: BatchInvestigationRequest) -> dict[str, object]:
