@@ -9,6 +9,7 @@ htmlcov/
 .env
 .env.*
 !.env.example
+!.env.docker.example
 dist/
 build/
 *.egg-info/
