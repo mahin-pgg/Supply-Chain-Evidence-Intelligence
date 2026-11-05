@@ -1,0 +1,18 @@
+services:
+  scei-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: scei-api:local
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.docker
+    environment:
+      SCEI_SQLITE_PATH: /app/data/local/scei.db
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    volumes:
+      - ./data/local:/app/data/local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

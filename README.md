@@ -65,3 +65,20 @@ Use `POST /v1/genealogy/traverse` with `direction`, `max_hops`, and `include_pos
 ## Synthetic development data
 
 The Bangladesh-oriented data generator is documented in [docs/data/README.md](docs/data/README.md). It produces deterministic, gzip-compressed JSONL with realistic supply-chain messiness and ground-truth incident impact. Generated data is intentionally ignored by Git.
+
+## Local Docker deployment
+
+Copy `.env.docker.example` to `.env.docker`, then start the API:
+
+```powershell
+Copy-Item .env.docker.example .env.docker
+docker compose up --build
+```
+
+The API is available at `http://127.0.0.1:8000/docs`; the investigation console is at `http://127.0.0.1:8000/ui`. SQLite persists in `data/local/scei.db`. Ollama remains on the host through `host.docker.internal`; set `OLLAMA_MODEL` in `.env.docker` to the installed local model.
+
+Create a recoverable database backup with:
+
+```powershell
+.\scripts\docker_backup.ps1
+```
