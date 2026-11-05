@@ -9,6 +9,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from scei.api.review_ui import REVIEW_UI_HTML
 from scei.api.ui import UI_HTML
 from scei.documents.pipeline import DocumentIngestionPipeline
 from scei.documents.semantic import SemanticDocumentEnricher
@@ -58,6 +59,10 @@ def create_app(
     @app.get("/ui", response_class=HTMLResponse, include_in_schema=False)
     def investigation_console() -> str:
         return UI_HTML
+
+    @app.get("/ui/reviews", response_class=HTMLResponse, include_in_schema=False)
+    def review_console() -> str:
+        return REVIEW_UI_HTML
 
     @app.get("/health")
     def health() -> dict[str, str]:

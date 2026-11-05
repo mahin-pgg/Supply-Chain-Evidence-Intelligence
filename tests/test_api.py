@@ -268,6 +268,14 @@ def test_investigation_console_is_available():
     store.close()
 
 
+def test_review_console_is_available():
+    store = SQLiteCanonicalStore()
+    response = TestClient(create_app(store)).get("/ui/reviews")
+    assert response.status_code == 200
+    assert "Resolution review queue" in response.text
+    store.close()
+
+
 def test_evaluation_summary_is_tenant_scoped():
     store = SQLiteCanonicalStore()
     tenant = uuid4()
