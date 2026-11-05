@@ -268,6 +268,19 @@ def test_investigation_console_is_available():
     store.close()
 
 
+def test_evaluation_summary_is_tenant_scoped():
+    store = SQLiteCanonicalStore()
+    tenant = uuid4()
+    node = uuid4()
+    store.upsert_graph_node(GraphNode(organization_id=tenant, node_id=node, node_type="batch", label="BATCH-EVAL"))
+    response = TestClient(create_app(store)).get("/v1/evaluation/summary", params={"organization_id": str(tenant), "start_node_id": str(node)})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["graph_counts"]["nodes"] == 1
+    assert body["tenant_isolation"]["passed"] is True
+    store.close()
+
+
 def test_resolution_review_queue_is_tenant_scoped_and_decidable():
     store = SQLiteCanonicalStore()
     client = TestClient(create_app(store))

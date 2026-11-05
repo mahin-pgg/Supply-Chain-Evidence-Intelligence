@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from scei.api.ui import UI_HTML
 from scei.documents.pipeline import DocumentIngestionPipeline
 from scei.documents.semantic import SemanticDocumentEnricher
+from scei.evaluation import evaluate_organization
 from scei.graph.application_service import ResolutionApplicationError, ResolutionApplicationService
 from scei.ingestion.models import (
     EventIngestEnvelope,
@@ -89,6 +90,12 @@ def create_app(
             "SELECT * FROM projection_runs WHERE context_id=? ORDER BY started_at", (str(context_id),)
         )]
         return result
+
+    @app.get("/v1/evaluation/summary")
+    def evaluation_summary(
+        organization_id: UUID, start_node_id: UUID | None = None, context_id: UUID | None = None,
+    ) -> dict[str, object]:
+        return evaluate_organization(canonical_store, organization_id, start_node_id, context_id).as_dict()
 
     @app.get("/v1/search/evidence", response_model=EvidenceSearchResponse)
     def search_evidence(
