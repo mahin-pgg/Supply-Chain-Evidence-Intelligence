@@ -273,6 +273,7 @@ def test_review_console_is_available():
     response = TestClient(create_app(store)).get("/ui/reviews")
     assert response.status_code == 200
     assert "Resolution review queue" in response.text
+    assert "Ask AI · advisory" in response.text
     store.close()
 
 
